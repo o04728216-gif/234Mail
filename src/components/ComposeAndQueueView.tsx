@@ -32,6 +32,7 @@ import {
   Sparkles,
   Square,
   Strikethrough,
+  Trash2,
   Underline,
   Upload,
   User,
@@ -2299,6 +2300,7 @@ interface QueueMonitorViewProps {
   onNavigateSmtp?: () => void;
   onJobUpdated: (job: QueueJob) => void;
   onJobCreated: (job: QueueJob) => void;
+  onJobsDeleted?: (deletedIds: string[]) => void;
 }
 
 export const QueueMonitorView: React.FC<QueueMonitorViewProps> = ({
@@ -2306,8 +2308,10 @@ export const QueueMonitorView: React.FC<QueueMonitorViewProps> = ({
   snapshot,
   onNavigateSmtp,
   onJobUpdated,
+  onJobsDeleted,
 }) => {
   const [currentPage, setCurrentPage] = useState(1);
+  const [deletingJobId, setDeletingJobId] = useState<string | null>(null);
 
   const totalJobs = snapshot.jobs.length;
   const totalPages = Math.max(1, Math.ceil(totalJobs / QUEUE_PAGE_SIZE));
@@ -2349,6 +2353,20 @@ export const QueueMonitorView: React.FC<QueueMonitorViewProps> = ({
       token
     );
     onJobUpdated(res.job);
+  };
+
+  const deleteJob = async (jobId: string) => {
+    setDeletingJobId(jobId);
+    try {
+      const res = await apiRequest<{ deletedIds: string[] }>(
+        `/api/jobs/${jobId}`,
+        { method: 'DELETE' },
+        token
+      );
+      onJobsDeleted?.(res.deletedIds?.length ? res.deletedIds : [jobId]);
+    } finally {
+      setDeletingJobId(null);
+    }
   };
 
   const renderPaginationBar = () => (
@@ -2580,6 +2598,17 @@ export const QueueMonitorView: React.FC<QueueMonitorViewProps> = ({
                       <span>Stop</span>
                     </button>
                   )}
+
+                  <button
+                    type="button"
+                    disabled={deletingJobId === job.id}
+                    onClick={() => deleteJob(job.id)}
+                    title="Delete from Email Queue & Sent"
+                    className="min-h-[38px] px-3 py-1.5 rounded-lg border border-rose-500/35 bg-rose-500/10 hover:bg-rose-500/20 disabled:opacity-50 text-rose-600 dark:text-rose-400 text-xs font-medium inline-flex items-center gap-1 cursor-pointer"
+                  >
+                    <Trash2 className="w-3.5 h-3.5" />
+                    <span>{deletingJobId === job.id ? '...' : 'Delete'}</span>
+                  </button>
                 </div>
               </div>
 

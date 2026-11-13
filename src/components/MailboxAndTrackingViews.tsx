@@ -22,11 +22,21 @@ import type {
 import { apiRequest, downloadCsvReport } from '../utils/api';
 
 interface SentCampaignsViewProps {
+  token: string;
   snapshot: DashboardSnapshot;
+  onJobsDeleted: (deletedIds: string[]) => void;
 }
 
-export const SentCampaignsView: React.FC<SentCampaignsViewProps> = ({ snapshot }) => {
+export const SentCampaignsView: React.FC<SentCampaignsViewProps> = ({
+  token,
+  snapshot,
+  onJobsDeleted,
+}) => {
   const [search, setSearch] = useState('');
+  const [deletingId, setDeletingId] = useState<string | null>(null);
+  const [confirmClearAll, setConfirmClearAll] = useState(false);
+  const [clearingAll, setClearingAll] = useState(false);
+  const [errorMsg, setErrorMsg] = useState<string | null>(null);
 
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase();
@@ -36,6 +46,41 @@ export const SentCampaignsView: React.FC<SentCampaignsViewProps> = ({ snapshot }
     );
   }, [snapshot.jobs, search]);
 
+  const handleDeleteOne = async (jobId: string) => {
+    setErrorMsg(null);
+    setDeletingId(jobId);
+    try {
+      const res = await apiRequest<{ deletedIds: string[] }>(
+        `/api/jobs/${jobId}`,
+        { method: 'DELETE' },
+        token
+      );
+      onJobsDeleted(res.deletedIds?.length ? res.deletedIds : [jobId]);
+    } catch (err) {
+      setErrorMsg(err instanceof Error ? err.message : 'Could not delete sent email');
+    } finally {
+      setDeletingId(null);
+    }
+  };
+
+  const handleDeleteAll = async () => {
+    setErrorMsg(null);
+    setClearingAll(true);
+    try {
+      const res = await apiRequest<{ deletedIds: string[] }>(
+        '/api/jobs',
+        { method: 'DELETE' },
+        token
+      );
+      onJobsDeleted(res.deletedIds || snapshot.jobs.map((j) => j.id));
+      setConfirmClearAll(false);
+    } catch (err) {
+      setErrorMsg(err instanceof Error ? err.message : 'Could not delete sent emails');
+    } finally {
+      setClearingAll(false);
+    }
+  };
+
   return (
     <div className="space-y-6">
       <div className="flex flex-col sm:flex-row sm:items-end justify-between gap-4">
@@ -44,12 +89,12 @@ export const SentCampaignsView: React.FC<SentCampaignsViewProps> = ({ snapshot }
             Sent
           </h1>
           <p className="text-xs sm:text-sm font-mono text-slate-600 dark:text-slate-400 mt-1">
-            All email campaigns you have sent.
+            All email campaigns you have sent. Deleting an item here also removes it from Email Queue.
           </p>
         </div>
 
-        <div className="flex items-center gap-2 w-full sm:w-auto">
-          <div className="relative flex-1 sm:w-60">
+        <div className="flex flex-wrap items-center gap-2 w-full sm:w-auto">
+          <div className="relative flex-1 sm:w-60 min-w-[180px]">
             <Search className="w-3.5 h-3.5 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
             <input
               type="text"
@@ -81,8 +126,47 @@ export const SentCampaignsView: React.FC<SentCampaignsViewProps> = ({ snapshot }
             <Download className="w-3.5 h-3.5" />
             <span>CSV</span>
           </button>
+
+          {snapshot.jobs.length > 0 && !confirmClearAll && (
+            <button
+              type="button"
+              onClick={() => setConfirmClearAll(true)}
+              className="min-h-[40px] px-3.5 py-2 rounded-lg border border-rose-500/35 bg-rose-500/10 hover:bg-rose-500/20 text-xs font-mono font-semibold text-rose-600 dark:text-rose-400 inline-flex items-center justify-center gap-1.5 whitespace-nowrap cursor-pointer shrink-0"
+            >
+              <Trash2 className="w-3.5 h-3.5" />
+              <span>Delete All Sent</span>
+            </button>
+          )}
+
+          {snapshot.jobs.length > 0 && confirmClearAll && (
+            <div className="flex items-center gap-1.5">
+              <button
+                type="button"
+                disabled={clearingAll}
+                onClick={handleDeleteAll}
+                className="min-h-[40px] px-3.5 py-2 rounded-lg bg-rose-500 hover:bg-rose-600 disabled:opacity-50 text-xs font-mono font-bold text-white inline-flex items-center justify-center gap-1.5 whitespace-nowrap cursor-pointer"
+              >
+                <Trash2 className="w-3.5 h-3.5" />
+                <span>{clearingAll ? 'Deleting...' : 'Confirm Delete All'}</span>
+              </button>
+              <button
+                type="button"
+                disabled={clearingAll}
+                onClick={() => setConfirmClearAll(false)}
+                className="min-h-[40px] px-3 py-2 rounded-lg border border-slate-200 dark:border-white/10 text-xs font-mono text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-white/5 cursor-pointer"
+              >
+                Cancel
+              </button>
+            </div>
+          )}
         </div>
       </div>
+
+      {errorMsg && (
+        <div className="px-4 py-3 rounded-xl border border-rose-500/30 bg-rose-500/10 text-xs font-mono text-rose-700 dark:text-rose-300">
+          {errorMsg}
+        </div>
+      )}
 
       {/* Mobile Card List (< md) */}
       <div className="md:hidden space-y-3">
@@ -100,19 +184,31 @@ export const SentCampaignsView: React.FC<SentCampaignsViewProps> = ({ snapshot }
                   From: {j.fromEmail}
                 </div>
               </div>
-              <span
-                className={`px-2 py-0.5 rounded border text-[10px] font-mono font-bold uppercase shrink-0 ${
-                  j.status === 'failed'
-                    ? 'border-rose-500/35 bg-rose-500/10 text-rose-600 dark:text-rose-400'
-                    : j.status === 'completed' && j.failedCount === 0
-                      ? 'border-emerald-500/35 bg-emerald-500/10 text-emerald-600 dark:text-emerald-400'
-                      : j.status === 'running'
-                        ? 'border-cyan-500/35 bg-cyan-500/10 text-cyan-600 dark:text-cyan-400'
-                        : 'border-amber-500/35 bg-amber-500/10 text-amber-600 dark:text-amber-400'
-                }`}
-              >
-                {j.status}
-              </span>
+              <div className="flex items-center gap-2 shrink-0">
+                <span
+                  className={`px-2 py-0.5 rounded border text-[10px] font-mono font-bold uppercase ${
+                    j.status === 'failed'
+                      ? 'border-rose-500/35 bg-rose-500/10 text-rose-600 dark:text-rose-400'
+                      : j.status === 'completed' && j.failedCount === 0
+                        ? 'border-emerald-500/35 bg-emerald-500/10 text-emerald-600 dark:text-emerald-400'
+                        : j.status === 'running'
+                          ? 'border-cyan-500/35 bg-cyan-500/10 text-cyan-600 dark:text-cyan-400'
+                          : 'border-amber-500/35 bg-amber-500/10 text-amber-600 dark:text-amber-400'
+                  }`}
+                >
+                  {j.status}
+                </span>
+                <button
+                  type="button"
+                  disabled={deletingId === j.id}
+                  onClick={() => handleDeleteOne(j.id)}
+                  title="Delete from Sent & Email Queue"
+                  className="min-h-[32px] px-2.5 py-1 rounded-lg border border-rose-500/35 bg-rose-500/10 hover:bg-rose-500/20 disabled:opacity-50 text-[11px] font-mono font-semibold text-rose-600 dark:text-rose-400 inline-flex items-center gap-1 cursor-pointer"
+                >
+                  <Trash2 className="w-3 h-3" />
+                  <span>{deletingId === j.id ? '...' : 'Delete'}</span>
+                </button>
+              </div>
             </div>
 
             {j.status === 'paused' && (
@@ -162,6 +258,7 @@ export const SentCampaignsView: React.FC<SentCampaignsViewProps> = ({ snapshot }
               <th className="py-3 px-4 font-medium text-right">Failed</th>
               <th className="py-3 px-4 font-medium">Status</th>
               <th className="py-3 px-4 font-medium text-right">Date</th>
+              <th className="py-3 px-4 font-medium text-right">Action</th>
             </tr>
           </thead>
           <tbody className="divide-y divide-slate-100 dark:divide-white/[0.05] font-mono tabular-nums">
@@ -205,12 +302,24 @@ export const SentCampaignsView: React.FC<SentCampaignsViewProps> = ({ snapshot }
                 <td className="py-3 px-4 text-right text-slate-500 dark:text-slate-400 whitespace-nowrap">
                   {j.createdAt}
                 </td>
+                <td className="py-3 px-4 text-right whitespace-nowrap">
+                  <button
+                    type="button"
+                    disabled={deletingId === j.id}
+                    onClick={() => handleDeleteOne(j.id)}
+                    title="Delete from Sent & Email Queue"
+                    className="min-h-[32px] px-2.5 py-1 rounded-lg border border-rose-500/35 bg-rose-500/10 hover:bg-rose-500/20 disabled:opacity-50 text-[11px] font-mono font-semibold text-rose-600 dark:text-rose-400 inline-flex items-center gap-1 cursor-pointer"
+                  >
+                    <Trash2 className="w-3 h-3" />
+                    <span>{deletingId === j.id ? '...' : 'Delete'}</span>
+                  </button>
+                </td>
               </tr>
             ))}
 
             {filtered.length === 0 && (
               <tr>
-                <td colSpan={7} className="py-12 text-center text-slate-500">
+                <td colSpan={8} className="py-12 text-center text-slate-500">
                   No sent campaigns match your search.
                 </td>
               </tr>

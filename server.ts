@@ -1653,6 +1653,29 @@ async function bootstrap() {
       return;
     }
 
+    // Re-arm any SMTP accounts that previously stopped on an error (e.g. a rejected From Email on an earlier campaign)
+    // so every new campaign automatically tries all plugged-in SMTP accounts in order.
+    let resetAnyPoolError = false;
+    for (const node of senderWs.smtpPool) {
+      if (node.status === 'error') {
+        node.status = 'ready';
+        node.statusReason = null;
+        node.cooldownUntil = null;
+        resetAnyPoolError = true;
+      }
+    }
+    if (resetAnyPoolError) {
+      store.syncActiveSmtpFromPool(sender.id);
+      broadcast(
+        'smtpPool:updated',
+        {
+          smtp: store.sanitizeSmtpNode(senderWs.smtp),
+          smtpPool: store.sanitizeSmtpPool(sender.id),
+        },
+        sender.id
+      );
+    }
+
     const newJob: StoredJob = {
       id: `job_${crypto.randomBytes(5).toString('hex')}`,
       ownerId: sender.id,
@@ -1739,6 +1762,28 @@ async function bootstrap() {
         job.failedCount = 0;
         job.completedAt = null;
       }
+      // Re-arm any error-paused SMTP accounts when manually resuming/retrying so all plugged-in SMTPs are tried
+      const ownerWs = store.getWorkspace(jobOwnerId);
+      let resetPoolOnResume = false;
+      for (const node of ownerWs.smtpPool) {
+        if (node.status === 'error') {
+          node.status = 'ready';
+          node.statusReason = null;
+          node.cooldownUntil = null;
+          resetPoolOnResume = true;
+        }
+      }
+      if (resetPoolOnResume) {
+        store.syncActiveSmtpFromPool(jobOwnerId);
+        broadcast(
+          'smtpPool:updated',
+          {
+            smtp: store.sanitizeSmtpNode(ownerWs.smtp),
+            smtpPool: store.sanitizeSmtpPool(jobOwnerId),
+          },
+          jobOwnerId
+        );
+      }
       job.status = 'running';
       job.pauseReason = null;
       job.limitType = null;
@@ -1769,6 +1814,52 @@ async function bootstrap() {
     const publicJob = stripRecipients(job);
     broadcast('job:updated', publicJob, jobOwnerId);
     res.json({ job: publicJob });
+  });
+
+  app.delete('/api/jobs/:jobId', requireAuth, (req: AuthenticatedRequest, res: Response) => {
+    const jobIdx = store.state.jobs.findIndex((j) => j.id === req.params.jobId);
+    if (jobIdx === -1) {
+      res.status(404).json({ error: 'Campaign not found' });
+      return;
+    }
+    const job = store.state.jobs[jobIdx];
+    const jobOwnerId = job.ownerId || 'usr_geekytycoon';
+    if (jobOwnerId !== req.user!.id && req.user!.role !== 'admin') {
+      res.status(403).json({ error: 'Not authorized to delete this campaign' });
+      return;
+    }
+
+    const deletedId = job.id;
+    store.state.jobs.splice(jobIdx, 1);
+    store.state.errors = store.state.errors.filter((e) => e.jobId !== deletedId);
+    store.state.tracking = store.state.tracking.filter((t) => t.jobId !== deletedId);
+    queueWorker.removeJobState(deletedId);
+    store.scheduleSave();
+
+    broadcast('jobs:deleted', { jobIds: [deletedId] }, jobOwnerId);
+    res.json({ deletedIds: [deletedId] });
+  });
+
+  app.delete('/api/jobs', requireAuth, (req: AuthenticatedRequest, res: Response) => {
+    const uid = req.user!.id;
+    const ownedJobs = store.state.jobs.filter((j) => (j.ownerId || 'usr_geekytycoon') === uid);
+    const deletedIds = ownedJobs.map((j) => j.id);
+    if (deletedIds.length === 0) {
+      res.json({ deletedIds: [] });
+      return;
+    }
+
+    const idSet = new Set(deletedIds);
+    store.state.jobs = store.state.jobs.filter((j) => !idSet.has(j.id));
+    store.state.errors = store.state.errors.filter((e) => !idSet.has(e.jobId));
+    store.state.tracking = store.state.tracking.filter((t) => !idSet.has(t.jobId));
+    for (const id of deletedIds) {
+      queueWorker.removeJobState(id);
+    }
+    store.scheduleSave();
+
+    broadcast('jobs:deleted', { jobIds: deletedIds }, uid);
+    res.json({ deletedIds });
   });
 
   // ============================================================================

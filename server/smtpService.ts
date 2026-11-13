@@ -112,7 +112,11 @@ function classifySmtpFailure(err: unknown): {
       lower.includes('5.2.2')) &&
     !lower.includes('sender') &&
     !lower.includes('mail from') &&
+    !lower.includes('from address') &&
     !lower.includes('not owned') &&
+    !lower.includes('not allowed') &&
+    !lower.includes('unauthorized') &&
+    !lower.includes('spoof') &&
     !lower.includes('relay') &&
     !lower.includes('authenticat');
 
@@ -124,39 +128,13 @@ function classifySmtpFailure(err: unknown): {
     };
   }
 
-  // 4. All other errors are SMTP-level errors (Auth 535, Sender Rejected 550/553, Relay Denied,
-  //    SPF/DKIM/DMARC Policy 554, TLS/SSL Handshake, Connection Refused, Host Not Found, Syntax 501)
+  // 4. All other errors are SMTP-level errors (Auth 535, Custom From / Sender Rejected 550/553,
+  //    Relay Denied, SPF/DKIM/DMARC Policy 554, TLS/SSL Handshake, Connection Refused, Syntax 501)
   return {
     smtpCode,
     errorMessage: msg,
     failureKind: 'smtp_error',
   };
-}
-
-function isSenderIdentityRejection(err: unknown): boolean {
-  const raw = err as { responseCode?: number; response?: string; message?: string };
-  const code = typeof raw?.responseCode === 'number' ? raw.responseCode : 0;
-  const text = `${raw?.response || ''} ${raw?.message || ''}`.toLowerCase();
-  if (
-    code === 553 ||
-    code === 501 ||
-    text.includes('sender address rejected') ||
-    text.includes('not owned by') ||
-    text.includes('mail from') ||
-    text.includes('from address') ||
-    text.includes('cannot send mail as') ||
-    text.includes('not allowed to send') ||
-    text.includes('unauthorized sender') ||
-    text.includes('sender verify failed') ||
-    text.includes('domain is not verified') ||
-    text.includes('spoof') ||
-    text.includes('5.7.1') ||
-    text.includes('5.1.7') ||
-    text.includes('5.1.8')
-  ) {
-    return true;
-  }
-  return false;
 }
 
 export function interpolatePersonalization(template: string, recipient: RecipientItem): string {
@@ -512,74 +490,30 @@ export async function dispatchSingleEmail(payload: DispatchPayload): Promise<Dis
       : cleanReplyToEmail
     : undefined;
 
+  const failedNodeReasons: string[] = [];
+
   for (let i = 0; i < candidates.length; i++) {
     const node = candidates[i];
     const nodeLabel = formatNodeTag(node);
     lastAttemptedLabel = nodeLabel;
-    const authEmail = node.username.trim().includes('@') ? node.username.trim() : '';
 
     try {
       const transporter = getPooledTransporterForNode(uid, node);
-      const primaryFrom = cleanFromName
+      const customFrom = cleanFromName
         ? { name: cleanFromName, address: cleanFromEmail }
         : cleanFromEmail;
 
-      try {
-        await transporter.sendMail({
-          from: primaryFrom,
-          to: toAddress,
-          replyTo: baseReplyTo,
-          subject: personalizedSubject,
-          text: content.text,
-          html: content.html,
-        });
-      } catch (firstErr) {
-        // Automatic deliverability fallback if the SMTP server strictly requires MAIL FROM or From
-        // to match the authenticated SMTP mailbox when user typed a custom From address
-        if (
-          authEmail &&
-          authEmail.toLowerCase() !== cleanFromEmail.toLowerCase() &&
-          isSenderIdentityRejection(firstErr)
-        ) {
-          try {
-            // Try 2A: Keep user's custom From header, set SMTP Envelope MAIL FROM to authenticated mailbox
-            await transporter.sendMail({
-              from: primaryFrom,
-              envelope: {
-                from: authEmail,
-                to: cleanRecipientEmail,
-              },
-              to: toAddress,
-              replyTo: baseReplyTo,
-              subject: personalizedSubject,
-              text: content.text,
-              html: content.html,
-            });
-          } catch (secondErr) {
-            if (isSenderIdentityRejection(secondErr)) {
-              // Try 2B: Server enforces header From == authenticated mailbox (e.g. Gmail/Zoho/Hostinger);
-              // preserve sender display name & route replies to user's custom address so mail delivers!
-              const fallbackReplyTo =
-                baseReplyTo ||
-                (cleanFromName
-                  ? { name: cleanFromName, address: cleanFromEmail }
-                  : cleanFromEmail);
-              await transporter.sendMail({
-                from: cleanFromName ? { name: cleanFromName, address: authEmail } : authEmail,
-                to: toAddress,
-                replyTo: fallbackReplyTo,
-                subject: personalizedSubject,
-                text: content.text,
-                html: content.html,
-              });
-            } else {
-              throw secondErr;
-            }
-          }
-        } else {
-          throw firstErr;
-        }
-      }
+      // Always send strictly with the user's custom From Name & custom From Email.
+      // If this SMTP server rejects the custom From Email, catch(err) below will immediately
+      // advance to the next plugged-in SMTP account (or pause and report the exact server reason).
+      await transporter.sendMail({
+        from: customFrom,
+        to: toAddress,
+        replyTo: baseReplyTo,
+        subject: personalizedSubject,
+        text: content.text,
+        html: content.html,
+      });
 
       node.sentCount = (node.sentCount || 0) + 1;
       node.status = 'ready';
@@ -621,8 +555,12 @@ export async function dispatchSingleEmail(payload: DispatchPayload): Promise<Dis
       // Evict broken/stale pooled socket so subsequent retries establish a clean TCP/TLS session
       evictPooledTransporter(uid, node.id);
 
-      // Otherwise, this SMTP stopped (deferred limit, max send quota, or server/auth error):
-      // Mark it immediately and auto-switch to the next available SMTP in the loop!
+      failedNodeReasons.push(
+        `${nodeLabel}: ${classified.smtpCode ? `[${classified.smtpCode}] ` : ''}${classified.errorMessage}`
+      );
+
+      // This SMTP rejected the custom From Email, hit quota, deferred, or failed auth/connection:
+      // Mark it and immediately try the next plugged-in SMTP account in the loop!
       if (!firstStoppedLabel) {
         firstStoppedLabel = nodeLabel;
       }
@@ -661,14 +599,18 @@ export async function dispatchSingleEmail(payload: DispatchPayload): Promise<Dis
           ? 'smtp_error'
           : lastClassification?.failureKind) || 'smtp_error';
 
+  const combinedErrorMessage =
+    failedNodeReasons.length > 1
+      ? failedNodeReasons.join(' | ')
+      : lastClassification?.errorMessage ||
+        'All plugged-in SMTP accounts failed to deliver or stopped.';
+
   return {
     ok: false,
     smtpCode: lastClassification?.smtpCode || 'SMTP_ERR',
-    errorMessage:
-      lastClassification?.errorMessage ||
-      'All plugged-in SMTP accounts failed to deliver or stopped.',
+    errorMessage: combinedErrorMessage,
     failureKind: finalFailureKind,
-    usedSmtpLabel: lastAttemptedLabel,
+    usedSmtpLabel: failedNodeReasons.length > 1 ? undefined : lastAttemptedLabel,
     latencyMs: Math.max(25, Date.now() - start),
     poolMutated,
   };

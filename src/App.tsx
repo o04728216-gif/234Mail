@@ -407,6 +407,16 @@ export default function App() {
                   errors: [errEntry, ...prev.errors].slice(0, 200),
                 };
               }
+              case 'jobs:deleted': {
+                const { jobIds } = msg.payload as { jobIds: string[] };
+                const idSet = new Set(jobIds);
+                return {
+                  ...prev,
+                  jobs: prev.jobs.filter((j) => !idSet.has(j.id)),
+                  errors: prev.errors.filter((e) => !idSet.has(e.jobId)),
+                  tracking: prev.tracking.filter((r) => !idSet.has(r.jobId)),
+                };
+              }
               default:
                 return prev;
             }
@@ -1074,10 +1084,41 @@ export default function App() {
                       : prev
                   )
                 }
+                onJobsDeleted={(deletedIds) => {
+                  const idSet = new Set(deletedIds);
+                  setSnapshot((prev) =>
+                    prev
+                      ? {
+                          ...prev,
+                          jobs: prev.jobs.filter((j) => !idSet.has(j.id)),
+                          errors: prev.errors.filter((e) => !idSet.has(e.jobId)),
+                          tracking: prev.tracking.filter((r) => !idSet.has(r.jobId)),
+                        }
+                      : prev
+                  );
+                }}
               />
             )}
 
-            {activeTab === 'sent' && <SentCampaignsView snapshot={snapshot} />}
+            {activeTab === 'sent' && (
+              <SentCampaignsView
+                token={token}
+                snapshot={snapshot}
+                onJobsDeleted={(deletedIds) => {
+                  const idSet = new Set(deletedIds);
+                  setSnapshot((prev) =>
+                    prev
+                      ? {
+                          ...prev,
+                          jobs: prev.jobs.filter((j) => !idSet.has(j.id)),
+                          errors: prev.errors.filter((e) => !idSet.has(e.jobId)),
+                          tracking: prev.tracking.filter((r) => !idSet.has(r.jobId)),
+                        }
+                      : prev
+                  );
+                }}
+              />
+            )}
 
             {activeTab === 'tracking' && (
               <TrackingView

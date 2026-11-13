@@ -32,6 +32,10 @@ class QueueWorkerEngine {
     }, 250);
   }
 
+  public removeJobState(jobId: string): void {
+    this.tokenBuckets.delete(jobId);
+  }
+
   private getAppBaseUrl(): string {
     return (process.env.APP_URL || 'http://localhost:3000').replace(/\/$/, '');
   }
