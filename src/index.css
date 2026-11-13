@@ -1,0 +1,225 @@
+@import "tailwindcss";
+@custom-variant dark (&:where(.dark, .dark *));
+
+@layer base {
+  :root {
+    --font-display: 'Syne', 'Plus Jakarta Sans', sans-serif;
+    --font-sans: 'Plus Jakarta Sans', -apple-system, BlinkMacSystemFont, sans-serif;
+    --font-mono: 'JetBrains Mono', monospace;
+  }
+
+  html,
+  body {
+    max-width: 100%;
+    overflow-x: hidden;
+    -webkit-tap-highlight-color: transparent;
+  }
+
+  body {
+    font-family: var(--font-sans);
+    font-feature-settings: "cv02", "cv03", "cv04", "cv11";
+  }
+
+  /* Prevent iOS Safari automatic page zoom when focusing inputs on mobile phones */
+  @media (max-width: 639px) {
+    input:not([type="checkbox"]):not([type="radio"]):not([type="color"]),
+    textarea,
+    select {
+      font-size: 16px;
+    }
+  }
+
+  h1, h2, .font-display {
+    font-family: var(--font-display);
+  }
+
+  code, pre, .font-mono, .tabular-nums {
+    font-family: var(--font-mono);
+    font-variant-numeric: tabular-nums;
+  }
+}
+
+/* ============================================================================
+   MULTI-THEME PALETTES (Red, Gold, Green, Blue, Silver + Default Black & Light)
+   ============================================================================ */
+html[data-theme='red'] {
+  --esp-bg-canvas: #120609;
+  --esp-bg-shell: #18080c;
+  --esp-bg-card: #1f0c11;
+  --esp-bg-elevated: #2a1118;
+  --esp-grid-line: rgba(244, 63, 94, 0.06);
+  --color-cyan-200: #fecdd3;
+  --color-cyan-300: #fda4af;
+  --color-cyan-400: #fb7185;
+  --color-cyan-500: #f43f5e;
+  --color-cyan-600: #e11d48;
+  --color-cyan-700: #be123c;
+  --color-sky-400: #ef4444;
+  --color-sky-500: #dc2626;
+  --color-indigo-300: #fca5a5;
+  --color-indigo-400: #f87171;
+  --color-indigo-500: #ef4444;
+}
+
+html[data-theme='gold'] {
+  --esp-bg-canvas: #110d05;
+  --esp-bg-shell: #171207;
+  --esp-bg-card: #1f180a;
+  --esp-bg-elevated: #2a210f;
+  --esp-grid-line: rgba(245, 158, 11, 0.065);
+  --color-cyan-200: #fde68a;
+  --color-cyan-300: #fcd34d;
+  --color-cyan-400: #fbbf24;
+  --color-cyan-500: #f59e0b;
+  --color-cyan-600: #d97706;
+  --color-cyan-700: #b45309;
+  --color-sky-400: #eab308;
+  --color-sky-500: #ca8a04;
+  --color-indigo-300: #fde047;
+  --color-indigo-400: #f59e0b;
+  --color-indigo-500: #d97706;
+}
+
+html[data-theme='green'] {
+  --esp-bg-canvas: #041009;
+  --esp-bg-shell: #07160d;
+  --esp-bg-card: #0b1f13;
+  --esp-bg-elevated: #112b1b;
+  --esp-grid-line: rgba(16, 185, 129, 0.06);
+  --color-cyan-200: #a7f3d0;
+  --color-cyan-300: #6ee7b7;
+  --color-cyan-400: #34d399;
+  --color-cyan-500: #10b981;
+  --color-cyan-600: #059669;
+  --color-cyan-700: #047857;
+  --color-sky-400: #22c55e;
+  --color-sky-500: #16a34a;
+  --color-indigo-300: #86efac;
+  --color-indigo-400: #4ade80;
+  --color-indigo-500: #16a34a;
+}
+
+html[data-theme='blue'] {
+  --esp-bg-canvas: #040b1a;
+  --esp-bg-shell: #071126;
+  --esp-bg-card: #0b1835;
+  --esp-bg-elevated: #112247;
+  --esp-grid-line: rgba(59, 130, 246, 0.07);
+  --color-cyan-200: #bfdbfe;
+  --color-cyan-300: #93c5fd;
+  --color-cyan-400: #60a5fa;
+  --color-cyan-500: #3b82f6;
+  --color-cyan-600: #2563eb;
+  --color-cyan-700: #1d4ed8;
+  --color-sky-400: #38bdf8;
+  --color-sky-500: #0284c7;
+  --color-indigo-300: #a5b4fc;
+  --color-indigo-400: #818cf8;
+  --color-indigo-500: #6366f1;
+}
+
+html[data-theme='silver'] {
+  --esp-bg-canvas: #161920;
+  --esp-bg-shell: #1c2029;
+  --esp-bg-card: #232833;
+  --esp-bg-elevated: #2c3340;
+  --esp-grid-line: rgba(226, 232, 240, 0.065);
+  --color-cyan-200: #f8fafc;
+  --color-cyan-300: #f1f5f9;
+  --color-cyan-400: #e2e8f0;
+  --color-cyan-500: #cbd5e1;
+  --color-cyan-600: #94a3b8;
+  --color-cyan-700: #64748b;
+  --color-sky-400: #dbe4ee;
+  --color-sky-500: #94a3b8;
+  --color-indigo-300: #e2e8f0;
+  --color-indigo-400: #cbd5e1;
+  --color-indigo-500: #94a3b8;
+}
+
+/* Map dark workspace surface layers onto active custom color theme */
+html.dark[data-theme]:not([data-theme='dark']):not([data-theme='light']) .dark\:bg-\[\#07090e\] {
+  background-color: var(--esp-bg-canvas);
+}
+
+html.dark[data-theme]:not([data-theme='dark']):not([data-theme='light'])
+  :is(.dark\:bg-\[\#090c13\], .dark\:bg-\[\#0b0f17\], .dark\:bg-\[\#0c1017\]) {
+  background-color: var(--esp-bg-shell);
+}
+
+html.dark[data-theme]:not([data-theme='dark']):not([data-theme='light'])
+  :is(
+    .dark\:bg-\[\#0d1118\],
+    .dark\:bg-\[\#0d1119\],
+    .dark\:bg-\[\#0d121a\],
+    .dark\:bg-\[\#0b131e\],
+    .dark\:bg-\[\#0f141e\]
+  ) {
+  background-color: var(--esp-bg-card);
+}
+
+html.dark[data-theme]:not([data-theme='dark']):not([data-theme='light'])
+  :is(
+    .dark\:bg-\[\#11151e\],
+    .dark\:bg-\[\#111621\],
+    .dark\:bg-\[\#111622\],
+    .dark\:bg-\[\#121722\],
+    .dark\:bg-\[\#131822\],
+    .dark\:bg-\[\#141821\],
+    .dark\:bg-\[\#141923\],
+    .dark\:bg-\[\#141926\],
+    .dark\:bg-\[\#141a26\],
+    .dark\:bg-\[\#1c212c\]
+  ) {
+  background-color: var(--esp-bg-elevated);
+}
+
+/* Ensure native <select> dropdown options stay legible in all dark & custom themes */
+html.dark select option {
+  background-color: var(--esp-bg-elevated, #121722);
+  color: #f8fafc;
+}
+
+/* Architectural subtle background grid matching 234Mail workspace */
+.esp-grid-bg {
+  background-size: 48px 48px;
+  background-image:
+    linear-gradient(to right, rgba(15, 23, 42, 0.04) 1px, transparent 1px),
+    linear-gradient(to bottom, rgba(15, 23, 42, 0.04) 1px, transparent 1px);
+}
+
+.dark .esp-grid-bg {
+  background-size: 48px 48px;
+  background-image:
+    linear-gradient(to right, var(--esp-grid-line, rgba(255, 255, 255, 0.03)) 1px, transparent 1px),
+    linear-gradient(to bottom, var(--esp-grid-line, rgba(255, 255, 255, 0.03)) 1px, transparent 1px);
+}
+
+/* Custom subtle scrollbars */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: rgba(148, 163, 184, 0.25);
+  border-radius: 3px;
+}
+.dark ::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.12);
+}
+
+/* Hide horizontal scrollbar on touch tab carousels while keeping smooth swipe scrolling */
+.no-scrollbar::-webkit-scrollbar {
+  display: none;
+}
+.no-scrollbar {
+  -ms-overflow-style: none;
+  scrollbar-width: none;
+}
+
+.pb-safe {
+  padding-bottom: max(0.75rem, env(safe-area-inset-bottom));
+}

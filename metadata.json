@@ -1,0 +1,6 @@
+{
+  "name": "234Mail — High-Deliverability Email & Queue Engine",
+  "description": "High-deliverability email service provider with real SMTP integration, configurable stepped hourly queue jobs, high-speed dispatch engine, engagement analytics, API keys, and role-based access control.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
