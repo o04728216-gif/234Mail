@@ -35,9 +35,9 @@ export const LandingAuthView: React.FC<LandingAuthViewProps> = ({
   const [authTab, setAuthTab] = useState<AuthMode>(() =>
     resetToken ? 'new_password' : 'signin'
   );
-  const [identifier, setIdentifier] = useState('Geekytycoon');
+  const [identifier, setIdentifier] = useState('');
   const [email, setEmail] = useState('');
-  const [password, setPassword] = useState('demo1234');
+  const [password, setPassword] = useState('');
   const [newPassword, setNewPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
 
@@ -109,13 +109,6 @@ export const LandingAuthView: React.FC<LandingAuthViewProps> = ({
     setMagicLinkSentInfo(null);
     if (next === 'register') {
       setResetSuccess(null);
-      if (identifier === 'Geekytycoon') {
-        setIdentifier('');
-        setPassword('');
-      }
-    } else if (!identifier) {
-      setIdentifier('Geekytycoon');
-      setPassword('demo1234');
     }
   };
 
@@ -605,7 +598,7 @@ export const LandingAuthView: React.FC<LandingAuthViewProps> = ({
                       type="text"
                       value={identifier}
                       onChange={(e) => setIdentifier(e.target.value)}
-                      placeholder={authTab === 'register' ? 'yourname' : 'Geekytycoon'}
+                      placeholder={authTab === 'register' ? 'Choose a username' : 'you@example.com or username'}
                       required
                       className="w-full px-3.5 py-2.5 rounded-lg border border-slate-300 dark:border-white/10 bg-slate-50 dark:bg-[#e8eff7] dark:text-slate-900 text-sm text-slate-900 focus:outline-none focus:ring-2 focus:ring-cyan-500"
                     />

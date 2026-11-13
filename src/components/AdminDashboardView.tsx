@@ -1554,11 +1554,14 @@ export const AdminDashboardView: React.FC<AdminDashboardViewProps> = ({
 
                     <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5 pt-1">
                       <div>
-                        <label className="block text-[10px] text-slate-500 mb-1">Role</label>
+                        <label className="block text-[10px] text-slate-500 mb-1">
+                          {u.id === snapshot.user.id ? 'Role (Locked — Active Admin)' : 'Role'}
+                        </label>
                         <select
-                          value={draftRole}
+                          value={u.id === snapshot.user.id ? 'admin' : draftRole}
+                          disabled={u.id === snapshot.user.id}
                           onChange={(e) => setDraftRole(e.target.value as UserRole)}
-                          className="w-full min-h-[38px] px-2.5 py-1.5 rounded border border-slate-200 dark:border-white/10 bg-white dark:bg-[#0c1017] text-slate-900 dark:text-white"
+                          className="w-full min-h-[38px] px-2.5 py-1.5 rounded border border-slate-200 dark:border-white/10 bg-white dark:bg-[#0c1017] text-slate-900 dark:text-white disabled:opacity-60 disabled:cursor-not-allowed"
                         >
                           <option value="manager">User</option>
                           <option value="admin">Admin</option>
@@ -1857,7 +1860,7 @@ export const AdminLoginView: React.FC<AdminLoginViewProps> = ({
         '/api/auth/login',
         {
           method: 'POST',
-          body: JSON.stringify({ identifier, password }),
+          body: JSON.stringify({ identifier, password, adminPortal: true }),
         }
       );
 

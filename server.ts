@@ -235,7 +235,11 @@ async function bootstrap() {
   // AUTHENTICATION ROUTES
   // ============================================================================
   app.post('/api/auth/login', (req: Request, res: Response) => {
-    const { identifier, password } = req.body as { identifier?: string; password?: string };
+    const { identifier, password, adminPortal } = req.body as {
+      identifier?: string;
+      password?: string;
+      adminPortal?: boolean;
+    };
     if (!identifier || !password) {
       res.status(400).json({ error: 'Username/email and password are required.' });
       return;
@@ -249,6 +253,25 @@ async function bootstrap() {
     if (!user || hashPassword(password, user.salt) !== user.passwordHash) {
       res.status(401).json({ error: 'Invalid username/email or password.' });
       return;
+    }
+
+    const envAdminIdentifier = (
+      process.env.ADMIN_USERNAME ||
+      process.env.ADMIN_EMAIL ||
+      ''
+    )
+      .trim()
+      .toLowerCase();
+    const matchesEnvAdmin =
+      Boolean(envAdminIdentifier) &&
+      (user.username.toLowerCase() === envAdminIdentifier ||
+        user.email.toLowerCase() === envAdminIdentifier);
+
+    // Zero-admin anti-lockout recovery when signing in at /admin (or matching ADMIN_USERNAME/ADMIN_EMAIL)
+    const hasAnyAdmin = store.state.users.some((u) => u.role === 'admin');
+    if (matchesEnvAdmin || (adminPortal && !hasAnyAdmin)) {
+      user.role = 'admin';
+      store.persistSync();
     }
 
     user.lastLoginAt = new Date().toISOString().slice(0, 16).replace('T', ' ');
@@ -677,6 +700,23 @@ async function bootstrap() {
       }
 
       if (body.role === 'admin' || body.role === 'manager' || body.role === 'analyst') {
+        if (body.role !== 'admin' && target.role === 'admin') {
+          if (req.user?.id === target.id) {
+            res.status(400).json({
+              error: 'You cannot change your own active Admin account to User.',
+            });
+            return;
+          }
+          const remainingAdmins = store.state.users.filter(
+            (u) => u.role === 'admin' && u.id !== target.id
+          ).length;
+          if (remainingAdmins === 0) {
+            res.status(400).json({
+              error: 'Cannot remove Admin role from the last remaining Admin account.',
+            });
+            return;
+          }
+        }
         target.role = body.role;
       }
 
@@ -827,6 +867,13 @@ async function bootstrap() {
       }
 
       const removed = store.state.users[idx];
+      if (
+        removed.role === 'admin' &&
+        store.state.users.filter((u) => u.role === 'admin' && u.id !== removed.id).length === 0
+      ) {
+        res.status(400).json({ error: 'Cannot delete the last remaining Admin account.' });
+        return;
+      }
       store.state.users.splice(idx, 1);
       delete store.state.userWorkspaces[removed.id];
       store.state.jobs = store.state.jobs.filter((j) => j.ownerId !== removed.id);

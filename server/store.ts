@@ -81,7 +81,7 @@ export interface PersistentState {
 }
 
 const CURRENT_SCHEMA_VERSION = 4;
-const SEED_OWNER_ID = 'usr_geekytycoon';
+export const SEED_OWNER_ID = 'usr_geekytycoon';
 const REPO_DATA_DIR = path.resolve(process.cwd(), 'data');
 const REPO_DATA_FILE = path.join(REPO_DATA_DIR, 'esp-store.json');
 
@@ -1055,6 +1055,42 @@ function migrateLoadedState(parsed: Partial<PersistentState>): PersistentState {
       campaignsCount: typeof u.campaignsCount === 'number' ? u.campaignsCount : 0,
       options: { ...DEFAULT_USER_OPTIONS, ...(u.options || {}) },
     }));
+  }
+
+  // Optional Coolify / server env override to promote a specific username or email to Admin
+  const envAdminIdentifier = (
+    process.env.ADMIN_USERNAME ||
+    process.env.ADMIN_EMAIL ||
+    ''
+  )
+    .trim()
+    .toLowerCase();
+  if (envAdminIdentifier) {
+    const matchedEnvUser = users.find(
+      (u) =>
+        u.username.toLowerCase() === envAdminIdentifier ||
+        u.email.toLowerCase() === envAdminIdentifier
+    );
+    if (matchedEnvUser && matchedEnvUser.role !== 'admin') {
+      matchedEnvUser.role = 'admin';
+      console.log(`[234Mail] Promoted "${matchedEnvUser.username}" to admin via environment variable.`);
+    }
+  }
+
+  // Anti-lockout auto-recovery: if 0 admins remain (e.g. accidental self-demotion),
+  // automatically restore Admin role on the primary admin account without touching user data.
+  if (users.length > 0 && !users.some((u) => u.role === 'admin')) {
+    const recoveryTarget =
+      users.find((u) => u.id === SEED_OWNER_ID) ||
+      users
+        .slice()
+        .sort((a, b) => (a.userNumber || 999999) - (b.userNumber || 999999))[0];
+    if (recoveryTarget) {
+      recoveryTarget.role = 'admin';
+      console.log(
+        `[234Mail] Auto-recovered Admin role for "${recoveryTarget.username}" (${recoveryTarget.id}) because zero admin accounts existed.`
+      );
+    }
   }
 
   for (const u of users) {
