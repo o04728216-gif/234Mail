@@ -80,8 +80,19 @@ export interface PersistentState {
   telemetryHistory: TelemetryPoint[];
 }
 
-const CURRENT_SCHEMA_VERSION = 4;
+const CURRENT_SCHEMA_VERSION = 6;
 export const SEED_OWNER_ID = 'usr_geekytycoon';
+const SEED_DEMO_SMTP_IDS = new Set(['smtp_demo', 'smtp_ae6abe75']);
+const SEED_DEMO_SMTP_HOSTS = new Set(['whyistay.org', 'cytyrealestate.com']);
+const SEED_DEMO_JOB_IDS = new Set([
+  'job_inv_01',
+  'job_warmup_active',
+  'job_burst_10k',
+  'job_51bec5e268',
+]);
+const SEED_DEMO_DRAFT_IDS = new Set(['drf_1', 'drf_83010699', 'drf_87d9d349']);
+const SEED_DEMO_ERROR_IDS = new Set(['err_101']);
+const SEED_DEMO_KEY_IDS = new Set(['key_prod_hubspot']);
 const REPO_DATA_DIR = path.resolve(process.cwd(), 'data');
 const REPO_DATA_FILE = path.join(REPO_DATA_DIR, 'esp-store.json');
 
@@ -308,7 +319,7 @@ function buildSeedUsers(): StoredUser[] {
       joinedAt: '2026-03-17',
       paymentsCount: 1,
       totalPaidUsd: 50,
-      campaignsCount: 14,
+      campaignsCount: 0,
     }),
     mkUser({
       id: 'usr_17_ayomide',
@@ -469,91 +480,6 @@ function buildSeedUsers(): StoredUser[] {
   ];
 }
 
-function buildSeedTracking(): TrackingRecord[] {
-  const firstNames = [
-    'Justin',
-    'Megan',
-    'John',
-    'Paul',
-    'Jose',
-    'Mark',
-    'Avery',
-    'Alonso',
-    'Elena',
-    'Devon',
-    'Hannah',
-    'Caleb',
-    'Nadia',
-    'Liam',
-    'Sophia',
-    'Ethan',
-    'Chloe',
-    'Lucas',
-    'Maya',
-    'Noah',
-  ];
-  const lastNames = [
-    'Brown',
-    'Clark',
-    'Mercer',
-    'Lugo',
-    'Rivera',
-    'Hale',
-    'Vance',
-    'Chen',
-    'Brooks',
-    'turner',
-    'Patel',
-    'Morgan',
-    'Foster',
-    'Hayes',
-    'Reed',
-  ];
-  const domains = [
-    'backroads.com',
-    'carsoncoil.com',
-    'journeymexico.com',
-    'northstar-ops.io',
-    'summitgroup.co',
-  ];
-  const campaigns = [
-    { id: 'job_inv_01', name: 'Executive Summit VIP Invite', region: 'us-east-1' as const },
-    { id: 'job_warmup_active', name: 'Q4 SaaS Onboarding Sequence', region: 'eu-west-1' as const },
-    { id: 'job_burst_10k', name: 'Global Flash Security Advisory', region: 'ap-southeast-1' as const },
-  ];
-
-  return Array.from({ length: 245 }, (_, i) => {
-    const fn = firstNames[i % firstNames.length];
-    const ln = lastNames[(i * 3) % lastNames.length];
-    const dom = domains[i % domains.length];
-    const camp = campaigns[i % campaigns.length];
-    const email = `${fn.toLowerCase()}.${ln.toLowerCase()}${i + 1}@${dom}`;
-    const opened = i % 5 !== 0;
-    const opens = opened ? (i % 4) + 1 : 0;
-    const clicks = opened && i % 3 === 0 ? 1 : 0;
-    const day = String(11 - (i % 6)).padStart(2, '0');
-    const hour = String(22 - (i % 18)).padStart(2, '0');
-    const min = String((i * 7) % 60).padStart(2, '0');
-    const ts = `2026-11-${day} ${hour}:${min}:15`;
-
-    return {
-      id: `trk_seed_${i + 1}`,
-      ownerId: SEED_OWNER_ID,
-      jobId: camp.id,
-      campaignName: camp.name,
-      recipientEmail: email,
-      recipientName: `${fn} ${ln[0].toUpperCase()}${ln.slice(1)}`,
-      opens,
-      clicks,
-      converted: clicks > 0 && i % 2 === 0,
-      firstOpenedAt: opened ? ts : null,
-      lastOpenedAt: opened ? ts : null,
-      status: clicks > 0 ? 'clicked' : opened ? 'opened' : 'delivered',
-      region: camp.region,
-    };
-  });
-}
-
 function createSeedState(): PersistentState {
   const users = buildSeedUsers();
 
@@ -604,173 +530,12 @@ function createSeedState(): PersistentState {
     },
   ];
 
-  const jobs: StoredJob[] = [
-    {
-      id: 'job_inv_01',
-      ownerId: SEED_OWNER_ID,
-      campaignName: 'Executive Summit VIP Invite',
-      subject: 'You are Invited !',
-      fromName: 'Blake Mercer',
-      fromEmail: 'blake.m@carsoncoil.com',
-      replyToName: 'Blake Mercer',
-      replyToEmail: 'blake.m@carsoncoil.com',
-      mode: 'tracking',
-      body: 'Hi {first_name},\n\nYou are invited to our private Q4 Partner Briefing this Thursday.',
-      dispatchMode: 'hourly_queue',
-      hourlyRateLimit: 500,
-      warmupStageIndex: 5,
-      burstTargetPerSec: 0,
-      timeScaleMultiplier: 1,
-      totalRecipients: 420,
-      processedCount: 420,
-      sentCount: 418,
-      failedCount: 2,
-      retriedCount: 2,
-      openedCount: 196,
-      clickedCount: 58,
-      convertedCount: 24,
-      status: 'completed',
-      scheduledFor: null,
-      createdAt: '2026-11-11 18:05:35',
-      startedAt: '2026-11-11 18:05:36',
-      completedAt: '2026-11-11 18:56:12',
-      currentThroughputPerSec: 0,
-      currentHourlyRate: 500,
-      region: 'us-east-1',
-      maxRetries: 3,
-      attachmentNames: ['Q4_Summit_Agenda.pdf'],
-      recipients: [],
-    },
-    {
-      id: 'job_warmup_active',
-      ownerId: SEED_OWNER_ID,
-      campaignName: 'Q4 SaaS Onboarding Sequence',
-      subject: 'Welcome to Instant Billing Automation, {first_name}',
-      fromName: '234Mail Operations',
-      fromEmail: 'dispatch@whyistay.org',
-      replyToName: 'Support Team',
-      replyToEmail: 'support@whyistay.org',
-      mode: 'tracking',
-      body: 'Hi {first_name},\n\nYour dedicated transactional SMTP credentials are active.',
-      dispatchMode: 'auto_warmup',
-      hourlyRateLimit: 300,
-      warmupStageIndex: 3,
-      burstTargetPerSec: 0,
-      timeScaleMultiplier: 1,
-      totalRecipients: 650,
-      processedCount: 650,
-      sentCount: 648,
-      failedCount: 2,
-      retriedCount: 1,
-      openedCount: 241,
-      clickedCount: 64,
-      convertedCount: 19,
-      status: 'completed',
-      scheduledFor: null,
-      createdAt: '2026-11-12 07:42:10',
-      startedAt: '2026-11-12 07:42:12',
-      completedAt: '2026-11-12 08:45:00',
-      currentThroughputPerSec: 0,
-      currentHourlyRate: 300,
-      region: 'eu-west-1',
-      maxRetries: 3,
-      attachmentNames: [],
-      recipients: [],
-    },
-    {
-      id: 'job_burst_10k',
-      ownerId: SEED_OWNER_ID,
-      campaignName: 'Global Flash Security Advisory',
-      subject: 'Action Required: TLS 1.3 Certificate Rotation Notice',
-      fromName: 'Security Operations',
-      fromEmail: 'secops@carsoncoil.com',
-      replyToName: 'SecOps Desk',
-      replyToEmail: 'secops@carsoncoil.com',
-      mode: 'html',
-      body: '<h2>TLS 1.3 Certificate Upgrade</h2><p>Hi {first_name}, all relay endpoints now enforce TLS 1.3.</p>',
-      dispatchMode: 'hyper_burst',
-      hourlyRateLimit: 1000,
-      warmupStageIndex: 6,
-      burstTargetPerSec: 10000,
-      timeScaleMultiplier: 1,
-      totalRecipients: 25000,
-      processedCount: 25000,
-      sentCount: 24989,
-      failedCount: 11,
-      retriedCount: 9,
-      openedCount: 8920,
-      clickedCount: 3140,
-      convertedCount: 1420,
-      status: 'completed',
-      scheduledFor: null,
-      createdAt: '2026-11-10 17:53:23',
-      startedAt: '2026-11-10 17:53:24',
-      completedAt: '2026-11-10 17:53:27',
-      currentThroughputPerSec: 0,
-      currentHourlyRate: 1000,
-      region: 'us-east-1',
-      maxRetries: 3,
-      attachmentNames: [],
-      recipients: [],
-    },
-  ];
-
-  const tracking = buildSeedTracking();
-
-  const errors: DeliveryErrorLog[] = [
-    {
-      id: 'err_101',
-      ownerId: SEED_OWNER_ID,
-      jobId: 'job_warmup_active',
-      campaignName: 'Q4 SaaS Onboarding Sequence',
-      recipientEmail: 'bounce-mx9@legacy-corp.org',
-      smtpCode: '421 4.7.0',
-      errorMessage: 'Temporary receiving MX rate-limit; queued for retry.',
-      attempt: 1,
-      maxAttempts: 3,
-      retryStatus: 'pending_retry',
-      nextRetryAt: '2026-11-12 08:15:00',
-      region: 'eu-west-1',
-      timestamp: '2026-11-12 07:58:14',
-    },
-  ];
-
+  const jobs: StoredJob[] = [];
+  const tracking: TrackingRecord[] = [];
+  const errors: DeliveryErrorLog[] = [];
   const alerts: SystemAlert[] = [];
-
-  const defaultRawKey = 'esp_live_234m998a7c4b1e02f8d9a310b4c';
-  const apiKeys: StoredApiKey[] = [
-    {
-      id: 'key_prod_hubspot',
-      ownerId: SEED_OWNER_ID,
-      name: 'Transactional API Key',
-      prefix: 'esp_live_234m...10b4c',
-      scopes: ['send:transactional', 'campaigns:write', 'analytics:read'],
-      createdAt: '2026-09-14',
-      lastUsedAt: '2026-11-12 07:51:09',
-      requestsCount: 14820,
-      status: 'active',
-      keyHash: hashApiKey(defaultRawKey),
-    },
-  ];
-
-  const drafts: DraftItem[] = [
-    {
-      id: 'drf_1',
-      ownerId: SEED_OWNER_ID,
-      subject: 'December Product Release Notes',
-      fromName: 'Geekytycoon',
-      fromEmail: 'product@234mail.io',
-      replyToName: 'Product Team',
-      replyToEmail: 'feedback@234mail.io',
-      namesText: 'Elena\nMarcus\nDevon',
-      recipientsText: 'elena@backroads.com\nmarcus@carsoncoil.com\ndevon@journeymexico.com',
-      mode: 'tracking',
-      body: 'Hi {first_name},\n\nHere is an early preview of our December release.',
-      dispatchMode: 'hourly_queue',
-      hourlyRateLimit: 200,
-      updatedAt: '2026-11-11 21:14:00',
-    },
-  ];
+  const apiKeys: StoredApiKey[] = [];
+  const drafts: DraftItem[] = [];
 
   const telemetryHistory: TelemetryPoint[] = Array.from({ length: 16 }, (_, i) => {
     const minsAgo = (15 - i) * 2;
@@ -779,60 +544,68 @@ function createSeedState(): PersistentState {
     const mm = String(d.getMinutes()).padStart(2, '0');
     return {
       time: `${hh}:${mm}`,
-      sentPerSec: 12 + (i % 5) * 8,
-      hourlyProjection: 300,
-      deliverabilityPct: 99.4,
-      openRatePct: 34.8,
-      latencyMs: 21,
+      sentPerSec: 0,
+      hourlyProjection: 0,
+      deliverabilityPct: 100,
+      openRatePct: 0,
+      latencyMs: 18,
     };
   });
 
-  const smtpHost = process.env.SMTP_HOST || 'whyistay.org';
-  const smtpUser = process.env.SMTP_USER || 'no3u7ld8@whyistay.org';
-  const useRealSmtp = Boolean(process.env.SMTP_USER && process.env.SMTP_PASS);
+  const envHost = process.env.SMTP_HOST?.trim() || '';
+  const envUser = process.env.SMTP_USER?.trim() || '';
+  const envPass = process.env.SMTP_PASS || '';
+  const useRealSmtp = Boolean(envHost && envUser && envPass);
 
-  const primarySmtp: StoredSmtpNode = {
-    id: 'smtp_1',
-    label: 'SMTP #1',
-    host: smtpHost,
-    port: Number(process.env.SMTP_PORT || 587),
-    encryption: 'tls',
-    secure: process.env.SMTP_SECURE === 'true',
-    username: smtpUser,
-    passwordMasked: '••••••••••••',
-    hasPassword: true,
-    rawPassword: process.env.SMTP_PASS || 'virtual_high_speed_secret',
-    fromDefaultEmail: '',
-    fromDefaultName: '',
-    imapEnabled: true,
-    imapHost: '',
-    imapPort: 993,
-    useRealSmtp,
-    verified: true,
-    lastVerifiedAt: '2026-11-12 08:00:00',
-    region: 'us-east-1',
-    isPrimary: true,
-    status: 'ready',
-    statusReason: null,
-    cooldownUntil: null,
-    sentCount: 0,
-  };
+  const primarySmtp: StoredSmtpNode = useRealSmtp
+    ? {
+        id: 'smtp_1',
+        label: 'SMTP #1',
+        host: envHost,
+        port: Number(process.env.SMTP_PORT || 587),
+        encryption: process.env.SMTP_SECURE === 'true' ? 'ssl' : 'tls',
+        secure: process.env.SMTP_SECURE === 'true',
+        username: envUser,
+        passwordMasked: '••••••••••••',
+        hasPassword: true,
+        rawPassword: envPass,
+        fromDefaultEmail: envUser,
+        fromDefaultName: '',
+        imapEnabled: true,
+        imapHost: '',
+        imapPort: 993,
+        useRealSmtp: true,
+        verified: true,
+        lastVerifiedAt: null,
+        region: 'us-east-1',
+        isPrimary: true,
+        status: 'ready',
+        statusReason: null,
+        cooldownUntil: null,
+        sentCount: 0,
+      }
+    : createEmptySmtpPlaceholder();
 
-  const primaryPool: StoredSmtpNode[] = useRealSmtp
-    ? [{ ...primarySmtp, rawPassword: process.env.SMTP_PASS || '' }]
-    : [];
+  const primaryPool: StoredSmtpNode[] = useRealSmtp ? [{ ...primarySmtp }] : [];
 
-  const primaryInboxSync: InboxSyncInfo = {
-    smtpId: useRealSmtp ? 'smtp_1' : undefined,
-    smtpLabel: useRealSmtp ? 'SMTP #1' : undefined,
-    connectedAccount: smtpUser,
-    sourceHost: smtpHost,
-    isLiveSmtpAccount: useRealSmtp,
-    lastSyncedAt: null,
-    lastError: useRealSmtp
-      ? null
-      : 'Save your real SMTP Host, Username, and Password in SMTP Settings to load live incoming emails.',
-  };
+  const primaryInboxSync: InboxSyncInfo = useRealSmtp
+    ? {
+        smtpId: 'smtp_1',
+        smtpLabel: 'SMTP #1',
+        connectedAccount: envUser,
+        sourceHost: envHost,
+        isLiveSmtpAccount: true,
+        lastSyncedAt: null,
+        lastError: null,
+      }
+    : {
+        connectedAccount: '',
+        sourceHost: '',
+        isLiveSmtpAccount: false,
+        lastSyncedAt: null,
+        lastError:
+          'Add and save at least one real SMTP account in SMTP Settings to load live incoming emails.',
+      };
 
   const userWorkspaces: Record<string, UserWorkspaceData> = {
     [SEED_OWNER_ID]: {
@@ -886,7 +659,8 @@ function createSeedState(): PersistentState {
 
 function normalizeWorkspaceData(
   rawWs: Partial<UserWorkspaceData> | undefined,
-  fallbackSmtpTemplate: StoredSmtpNode
+  fallbackSmtpTemplate: StoredSmtpNode,
+  stripLegacyDemoSmtps = false
 ): UserWorkspaceData {
   const empty = createEmptyUserWorkspace();
   if (!rawWs) return empty;
@@ -895,7 +669,16 @@ function normalizeWorkspaceData(
     ...fallbackSmtpTemplate,
     ...(rawWs.smtp || {}),
   };
-  if (smtp.rawPassword && smtp.rawPassword !== 'virtual_high_speed_secret' && smtp.username) {
+  if (
+    stripLegacyDemoSmtps &&
+    (SEED_DEMO_SMTP_IDS.has(smtp.id) || SEED_DEMO_SMTP_HOSTS.has((smtp.host || '').toLowerCase()))
+  ) {
+    Object.assign(smtp, createEmptySmtpPlaceholder());
+  } else if (
+    smtp.rawPassword &&
+    smtp.rawPassword !== 'virtual_high_speed_secret' &&
+    smtp.username
+  ) {
     smtp.useRealSmtp = true;
   }
 
@@ -908,7 +691,12 @@ function normalizeWorkspaceData(
           n.host &&
           n.username &&
           n.rawPassword &&
-          n.rawPassword !== 'virtual_high_speed_secret'
+          n.rawPassword !== 'virtual_high_speed_secret' &&
+          !(
+            stripLegacyDemoSmtps &&
+            (SEED_DEMO_SMTP_IDS.has(n.id) ||
+              SEED_DEMO_SMTP_HOSTS.has((n.host || '').toLowerCase()))
+          )
       )
       .map((n, idx) => ({
         ...fallbackSmtpTemplate,
@@ -959,6 +747,7 @@ function normalizeWorkspaceData(
     Object.assign(smtp, activeNode);
   } else {
     activeSmtpId = '';
+    Object.assign(smtp, createEmptySmtpPlaceholder());
   }
 
   let inboxSmtpId = rawWs.inboxSmtpId || rawWs.inboxSync?.smtpId || activeSmtpId;
@@ -975,23 +764,27 @@ function normalizeWorkspaceData(
     ? rawWs.inbox.filter((m) => !['inb_1', 'inb_2', 'inb_3'].includes(m.id))
     : [];
 
-  const inboxSync: InboxSyncInfo = rawWs.inboxSync
-    ? {
-        ...rawWs.inboxSync,
-        smtpId: inboxTargetNode.useRealSmtp ? inboxTargetNode.id : undefined,
-        smtpLabel: inboxTargetNode.useRealSmtp ? inboxTargetNode.label : undefined,
-      }
-    : {
-        smtpId: inboxTargetNode.useRealSmtp ? inboxTargetNode.id : undefined,
-        smtpLabel: inboxTargetNode.useRealSmtp ? inboxTargetNode.label : undefined,
-        connectedAccount: inboxTargetNode.username || '',
-        sourceHost: inboxTargetNode.host || '',
-        isLiveSmtpAccount: Boolean(inboxTargetNode.useRealSmtp),
-        lastSyncedAt: null,
-        lastError: inboxTargetNode.useRealSmtp
-          ? null
-          : 'Add and save at least one real SMTP account in SMTP Settings to load live incoming emails.',
-      };
+  const inboxSync: InboxSyncInfo =
+    inboxTargetNode.useRealSmtp && rawWs.inboxSync
+      ? {
+          ...rawWs.inboxSync,
+          smtpId: inboxTargetNode.id,
+          smtpLabel: inboxTargetNode.label,
+          connectedAccount: inboxTargetNode.username || '',
+          sourceHost: inboxTargetNode.host || '',
+          isLiveSmtpAccount: true,
+        }
+      : {
+          smtpId: inboxTargetNode.useRealSmtp ? inboxTargetNode.id : undefined,
+          smtpLabel: inboxTargetNode.useRealSmtp ? inboxTargetNode.label : undefined,
+          connectedAccount: inboxTargetNode.useRealSmtp ? inboxTargetNode.username || '' : '',
+          sourceHost: inboxTargetNode.useRealSmtp ? inboxTargetNode.host || '' : '',
+          isLiveSmtpAccount: Boolean(inboxTargetNode.useRealSmtp),
+          lastSyncedAt: null,
+          lastError: inboxTargetNode.useRealSmtp
+            ? null
+            : 'Add and save at least one real SMTP account in SMTP Settings to load live incoming emails.',
+        };
 
   return {
     smtp,
@@ -1099,13 +892,16 @@ function migrateLoadedState(parsed: Partial<PersistentState>): PersistentState {
 
   const maxUserNum = users.reduce((max, u) => Math.max(max, u.userNumber || 0), 18);
 
-  // Build isolated per-user workspaces, migrating top-level legacy SMTP/Inbox to Geekytycoon
+  const stripLegacyDemoSmtps = !parsed.schemaVersion || parsed.schemaVersion < 6;
+
+  // Build isolated per-user workspaces, keeping all real SMTPs and cleaning any legacy demo placeholders
   const userWorkspaces: Record<string, UserWorkspaceData> = {};
   if (parsed.userWorkspaces && typeof parsed.userWorkspaces === 'object') {
     for (const [uid, rawWs] of Object.entries(parsed.userWorkspaces)) {
       userWorkspaces[uid] = normalizeWorkspaceData(
         rawWs,
-        uid === SEED_OWNER_ID ? seed.smtp : createEmptySmtpPlaceholder()
+        createEmptySmtpPlaceholder(),
+        uid === SEED_OWNER_ID && stripLegacyDemoSmtps
       );
     }
   }
@@ -1120,7 +916,8 @@ function migrateLoadedState(parsed: Partial<PersistentState>): PersistentState {
         inboxSync: parsed.inboxSync,
         inbox: parsed.inbox,
       },
-      seed.smtp
+      createEmptySmtpPlaceholder(),
+      stripLegacyDemoSmtps
     );
   }
 
@@ -1167,48 +964,47 @@ function migrateLoadedState(parsed: Partial<PersistentState>): PersistentState {
     }
   }
 
-  const rawTracking =
-    !Array.isArray(parsed.tracking) || (wasVeryOldSchema && parsed.tracking.length < 20)
-      ? [...(parsed.tracking || []), ...buildSeedTracking()]
-      : parsed.tracking;
-  const tracking = rawTracking.map((t) => ({
-    ...t,
-    ownerId: t.ownerId || SEED_OWNER_ID,
-  }));
+  const tracking = (Array.isArray(parsed.tracking) ? parsed.tracking : [])
+    .filter((t) => t && !t.id?.startsWith('trk_seed_') && !SEED_DEMO_JOB_IDS.has(t.jobId))
+    .map((t) => ({
+      ...t,
+      ownerId: t.ownerId || SEED_OWNER_ID,
+    }));
 
-  const normalizedJobs = (parsed.jobs || seed.jobs).map((j) => {
-    const withOwner = {
+  const normalizedJobs = (Array.isArray(parsed.jobs) ? parsed.jobs : [])
+    .filter((j) => j && !SEED_DEMO_JOB_IDS.has(j.id))
+    .map((j) => ({
       ...j,
       ownerId: j.ownerId || SEED_OWNER_ID,
-    };
-    if (
-      withOwner.id === 'job_warmup_active' &&
-      withOwner.status === 'completed' &&
-      withOwner.processedCount < withOwner.totalRecipients
-    ) {
-      return {
-        ...withOwner,
-        processedCount: withOwner.totalRecipients,
-        sentCount: Math.max(0, withOwner.totalRecipients - (withOwner.failedCount || 0)),
-      };
+    }));
+
+  if (!parsed.schemaVersion || parsed.schemaVersion < 6) {
+    const geekyUser = users.find((u) => u.id === SEED_OWNER_ID);
+    if (geekyUser) {
+      geekyUser.campaignsCount = normalizedJobs.filter((j) => j.ownerId === SEED_OWNER_ID).length;
     }
-    return withOwner;
-  });
+  }
 
-  const errors = (parsed.errors || seed.errors).map((e) => ({
-    ...e,
-    ownerId: e.ownerId || SEED_OWNER_ID,
-  }));
+  const errors = (Array.isArray(parsed.errors) ? parsed.errors : [])
+    .filter((e) => e && !SEED_DEMO_ERROR_IDS.has(e.id) && !SEED_DEMO_JOB_IDS.has(e.jobId))
+    .map((e) => ({
+      ...e,
+      ownerId: e.ownerId || SEED_OWNER_ID,
+    }));
 
-  const drafts = (parsed.drafts || seed.drafts).map((d) => ({
-    ...d,
-    ownerId: d.ownerId || SEED_OWNER_ID,
-  }));
+  const drafts = (Array.isArray(parsed.drafts) ? parsed.drafts : [])
+    .filter((d) => d && !SEED_DEMO_DRAFT_IDS.has(d.id))
+    .map((d) => ({
+      ...d,
+      ownerId: d.ownerId || SEED_OWNER_ID,
+    }));
 
-  const apiKeys = (parsed.apiKeys || seed.apiKeys).map((k) => ({
-    ...k,
-    ownerId: k.ownerId || SEED_OWNER_ID,
-  }));
+  const apiKeys = (Array.isArray(parsed.apiKeys) ? parsed.apiKeys : [])
+    .filter((k) => k && !SEED_DEMO_KEY_IDS.has(k.id))
+    .map((k) => ({
+      ...k,
+      ownerId: k.ownerId || SEED_OWNER_ID,
+    }));
 
   return {
     schemaVersion: CURRENT_SCHEMA_VERSION,
@@ -1403,28 +1199,12 @@ class DataStore {
     const pool = ws.smtpPool;
     if (pool.length === 0) {
       ws.activeSmtpId = '';
-      ws.smtp =
-        userId === SEED_OWNER_ID
-          ? {
-              ...ws.smtp,
-              id: 'smtp_demo',
-              label: 'Demo Relay',
-              host: 'whyistay.org',
-              port: 587,
-              encryption: 'tls',
-              secure: false,
-              username: 'no3u7ld8@whyistay.org',
-              passwordMasked: '••••••••••••',
-              hasPassword: false,
-              rawPassword: 'virtual_high_speed_secret',
-              useRealSmtp: false,
-              verified: true,
-              isPrimary: true,
-              status: 'ready',
-              statusReason: null,
-              cooldownUntil: null,
-            }
-          : createEmptySmtpPlaceholder();
+      ws.smtp = createEmptySmtpPlaceholder();
+      if (userId === SEED_OWNER_ID) {
+        this.state.smtp = ws.smtp;
+        this.state.smtpPool = ws.smtpPool;
+        this.state.activeSmtpId = '';
+      }
       return ws.smtp;
     }
 

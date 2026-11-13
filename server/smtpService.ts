@@ -221,10 +221,10 @@ export async function verifySmtpConnection(
 
   if (!hasRealCredentials && !cfg.useRealSmtp) {
     return {
-      verified: true,
+      verified: false,
       useRealSmtp: false,
-      message: `Demo relay ${cfg.host}:${cfg.port} active. Enter your real SMTP Password to send live emails and sync your Inbox.`,
-      latencyMs: Math.max(9, Date.now() - start + 12),
+      message: 'Please enter your SMTP Host, Username, and Password to test connection.',
+      latencyMs: Date.now() - start,
     };
   }
 

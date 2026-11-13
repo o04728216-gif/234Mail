@@ -112,10 +112,17 @@ export const OverviewView: React.FC<OverviewViewProps> = ({ snapshot, lang, onNa
             <span className="truncate">{t(lang, 'smtpStatus')}</span>
             <Settings className="w-3.5 h-3.5 text-cyan-500 shrink-0" />
           </div>
-          <div className="mt-1.5 sm:mt-2 flex items-center gap-1.5 text-xs sm:text-base font-bold font-mono text-emerald-600 dark:text-emerald-400">
-            <Check className="w-3.5 h-3.5 sm:w-4 sm:h-4 shrink-0" />
-            <span className="truncate">{smtp.host ? t(lang, 'configured') : 'Plug in SMTP →'}</span>
-          </div>
+          {(snapshot.smtpPool && snapshot.smtpPool.length > 0) ||
+          Boolean(smtp.useRealSmtp && smtp.host) ? (
+            <div className="mt-1.5 sm:mt-2 flex items-center gap-1.5 text-xs sm:text-base font-bold font-mono text-emerald-600 dark:text-emerald-400">
+              <Check className="w-3.5 h-3.5 sm:w-4 sm:h-4 shrink-0" />
+              <span className="truncate">{t(lang, 'configured')}</span>
+            </div>
+          ) : (
+            <div className="mt-1.5 sm:mt-2 flex items-center gap-1.5 text-xs sm:text-base font-bold font-mono text-amber-500 dark:text-amber-400">
+              <span className="truncate">Plug in SMTP →</span>
+            </div>
+          )}
         </button>
       </div>
 

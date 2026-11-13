@@ -1629,6 +1629,30 @@ async function bootstrap() {
     const cappedHourly = Math.min(rawRequestedHourly, userOpts.maxHourlyRate) as HourlyRateStep;
 
     const senderWs = store.getWorkspace(sender.id);
+    const hasRealSmtp =
+      senderWs.smtpPool.some(
+        (n) =>
+          n.host?.trim() &&
+          n.username?.trim() &&
+          n.rawPassword &&
+          n.rawPassword !== 'virtual_high_speed_secret'
+      ) ||
+      Boolean(
+        senderWs.smtp.useRealSmtp &&
+          senderWs.smtp.host?.trim() &&
+          senderWs.smtp.username?.trim() &&
+          senderWs.smtp.rawPassword &&
+          senderWs.smtp.rawPassword !== 'virtual_high_speed_secret'
+      );
+
+    if (!hasRealSmtp) {
+      res.status(400).json({
+        error:
+          'No SMTP account plugged in yet. Please add your SMTP in SMTP Settings before sending emails.',
+      });
+      return;
+    }
+
     const newJob: StoredJob = {
       id: `job_${crypto.randomBytes(5).toString('hex')}`,
       ownerId: sender.id,

@@ -743,16 +743,17 @@ export const ComposeEmailView: React.FC<ComposeEmailViewProps> = ({
     (snapshot.user.subscriptionStatus === 'active' &&
       snapshot.user.daysLeft > 0 &&
       (snapshot.user.paymentsCount || 0) > 0);
-  const composeStorageKey = `234mail_compose_state_${snapshot.user.id}`;
+  const composeStorageKey = `234mail_compose_clean_${snapshot.user.id}`;
 
   const savedCompose = useMemo(() => {
     try {
+      localStorage.removeItem(`234mail_compose_state_${snapshot.user.id}`);
       const raw = localStorage.getItem(composeStorageKey);
       return raw ? (JSON.parse(raw) as Record<string, unknown>) : null;
     } catch {
       return null;
     }
-  }, [composeStorageKey]);
+  }, [composeStorageKey, snapshot.user.id]);
 
   const [mode, setMode] = useState<EmailMode>(
     () => (savedCompose?.mode as EmailMode) || 'plain'
@@ -1127,15 +1128,59 @@ export const ComposeEmailView: React.FC<ComposeEmailViewProps> = ({
 
   return (
     <form onSubmit={handleSend} className="w-full max-w-6xl xl:max-w-7xl mx-auto space-y-5 sm:space-y-6">
-      {/* Page Title matching Reference Screenshots */}
-      <div>
-        <h1 className="text-2xl sm:text-3xl font-extrabold font-display tracking-tight text-slate-900 dark:text-white flex items-center gap-2.5">
-          <span className="text-cyan-500">✉</span>
-          <span>Send Email</span>
-        </h1>
-        <p className="text-xs sm:text-sm font-mono text-slate-500 dark:text-slate-400 mt-1">
-          Send from any address.
-        </p>
+      {/* Page Title & 1-Click Clear Form */}
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <div>
+          <h1 className="text-2xl sm:text-3xl font-extrabold font-display tracking-tight text-slate-900 dark:text-white flex items-center gap-2.5">
+            <span className="text-cyan-500">✉</span>
+            <span>Send Email</span>
+          </h1>
+          <p className="text-xs sm:text-sm font-mono text-slate-500 dark:text-slate-400 mt-1">
+            Send from any address.
+          </p>
+        </div>
+
+        {(namesText ||
+          emailsText ||
+          fromName ||
+          fromEmail ||
+          replyToName ||
+          replyToEmail ||
+          subject ||
+          plainBody ||
+          !isVisualEmpty ||
+          attachments.length > 0) && (
+          <button
+            type="button"
+            onClick={() => {
+              setNamesText('');
+              setEmailsText('');
+              setFromName('');
+              setFromEmail('');
+              setReplyToName('');
+              setReplyToEmail('');
+              setSubject('');
+              setPlainBody('');
+              setHtmlBody('<p><br></p>');
+              setAttachments([]);
+              setScheduleLater(false);
+              setScheduledFor('');
+              setFeedback(null);
+              visualStylesRef.current = '';
+              if (visualEditorRef.current) {
+                visualEditorRef.current.innerHTML = '';
+              }
+              try {
+                localStorage.removeItem(composeStorageKey);
+              } catch {
+                // ignore
+              }
+            }}
+            className="min-h-[38px] px-3.5 py-1.5 rounded-lg border border-slate-200 dark:border-white/10 bg-white dark:bg-[#0d1119] text-xs font-mono text-slate-600 dark:text-slate-300 hover:border-rose-500/40 hover:text-rose-600 dark:hover:text-rose-400 transition-colors cursor-pointer"
+          >
+            Clear All Inputs
+          </button>
+        )}
       </div>
 
       {feedback && (

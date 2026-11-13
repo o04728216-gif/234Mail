@@ -412,7 +412,7 @@ export const SmtpSettingsView: React.FC<SmtpSettingsViewProps> = ({
         >
           {pool.length > 0
             ? `${pool.length} Plugged In · ${readyCount} Ready`
-            : 'Demo Mode · 0 Live SMTPs'}
+            : '0 SMTPs Plugged In'}
         </span>
       </div>
 
