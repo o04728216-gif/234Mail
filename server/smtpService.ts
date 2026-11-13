@@ -37,12 +37,18 @@ function classifySmtpFailure(err: unknown): {
     responseCode?: number;
     response?: string;
     code?: string;
+    command?: string;
     message?: string;
   };
   const numericCode = typeof raw?.responseCode === 'number' ? raw.responseCode : 0;
   const msg = (raw?.response || raw?.message || 'SMTP Dispatch Failure').trim();
   const lower = msg.toLowerCase();
-  const smtpCode = numericCode > 0 ? String(numericCode) : raw?.code || '451';
+  const smtpCode =
+    numericCode > 0
+      ? String(numericCode)
+      : raw?.code
+        ? String(raw.code)
+        : 'SMTP_ERR';
 
   // 1. Maximum / Daily Send Quota Reached (e.g. Gmail 550 5.4.5, Hostinger/Zoho/cPanel max quota)
   if (
@@ -88,39 +94,69 @@ function classifySmtpFailure(err: unknown): {
     };
   }
 
-  // 3. SMTP Server Down / Auth Rejected / Sender Policy Block (triggers auto-switch to next SMTP!)
-  if (
-    numericCode === 535 ||
-    numericCode === 530 ||
-    numericCode === 553 ||
-    numericCode === 554 ||
-    lower.includes('authentication') ||
-    lower.includes('invalid login') ||
-    lower.includes('username and password not accepted') ||
-    lower.includes('sender address rejected') ||
-    lower.includes('not owned by') ||
-    lower.includes('relay access denied') ||
-    lower.includes('account suspended') ||
-    lower.includes('blocked') ||
-    raw?.code === 'ECONNREFUSED' ||
-    raw?.code === 'ENOTFOUND' ||
-    raw?.code === 'ECONNECTION' ||
-    raw?.code === 'ESOCKET' ||
-    raw?.code === 'EAUTH'
-  ) {
+  // 3. Single Recipient Hard Bounce (ONLY when recipient address itself is unknown/non-existent)
+  const isRecipientMailboxBounce =
+    (numericCode === 550 || numericCode === 551 || numericCode === 552 || numericCode === 511) &&
+    (lower.includes('user unknown') ||
+      lower.includes('no such user') ||
+      lower.includes('does not exist') ||
+      lower.includes('mailbox unavailable') ||
+      lower.includes('mailbox not found') ||
+      lower.includes('address rejected: user') ||
+      lower.includes('recipient address rejected') ||
+      lower.includes('invalid recipient') ||
+      lower.includes('unknown recipient') ||
+      lower.includes('over quota') ||
+      lower.includes('mailbox full') ||
+      lower.includes('5.1.1') ||
+      lower.includes('5.2.2')) &&
+    !lower.includes('sender') &&
+    !lower.includes('mail from') &&
+    !lower.includes('not owned') &&
+    !lower.includes('relay') &&
+    !lower.includes('authenticat');
+
+  if (isRecipientMailboxBounce) {
     return {
       smtpCode,
       errorMessage: msg,
-      failureKind: 'smtp_error',
+      failureKind: 'bounce',
     };
   }
 
-  // 4. Single Recipient Hard Bounce (550 user unknown, invalid mailbox, etc. — SMTP itself is healthy)
+  // 4. All other errors are SMTP-level errors (Auth 535, Sender Rejected 550/553, Relay Denied,
+  //    SPF/DKIM/DMARC Policy 554, TLS/SSL Handshake, Connection Refused, Host Not Found, Syntax 501)
   return {
     smtpCode,
     errorMessage: msg,
-    failureKind: 'bounce',
+    failureKind: 'smtp_error',
   };
+}
+
+function isSenderIdentityRejection(err: unknown): boolean {
+  const raw = err as { responseCode?: number; response?: string; message?: string };
+  const code = typeof raw?.responseCode === 'number' ? raw.responseCode : 0;
+  const text = `${raw?.response || ''} ${raw?.message || ''}`.toLowerCase();
+  if (
+    code === 553 ||
+    code === 501 ||
+    text.includes('sender address rejected') ||
+    text.includes('not owned by') ||
+    text.includes('mail from') ||
+    text.includes('from address') ||
+    text.includes('cannot send mail as') ||
+    text.includes('not allowed to send') ||
+    text.includes('unauthorized sender') ||
+    text.includes('sender verify failed') ||
+    text.includes('domain is not verified') ||
+    text.includes('spoof') ||
+    text.includes('5.7.1') ||
+    text.includes('5.1.7') ||
+    text.includes('5.1.8')
+  ) {
+    return true;
+  }
+  return false;
 }
 
 export function interpolatePersonalization(template: string, recipient: RecipientItem): string {
@@ -129,6 +165,24 @@ export function interpolatePersonalization(template: string, recipient: Recipien
     .replace(/\{first_name\}/gi, safeName)
     .replace(/\{\{first_name\}\}/gi, safeName)
     .replace(/\{email\}/gi, recipient.email);
+}
+
+function htmlToCleanPlainText(html: string): string {
+  return html
+    .replace(/<head[\s\S]*?<\/head>/gi, '')
+    .replace(/<style[\s\S]*?<\/style>/gi, '')
+    .replace(/<script[\s\S]*?<\/script>/gi, '')
+    .replace(/<br\s*\/?>/gi, '\n')
+    .replace(/<\/(p|div|tr|h1|h2|h3|h4|h5|h6|li)>/gi, '\n')
+    .replace(/<[^>]+>/g, '')
+    .replace(/&nbsp;/gi, ' ')
+    .replace(/&amp;/gi, '&')
+    .replace(/&lt;/gi, '<')
+    .replace(/&gt;/gi, '>')
+    .replace(/&quot;/gi, '"')
+    .replace(/&#39;/gi, "'")
+    .replace(/\n{3,}/g, '\n\n')
+    .trim();
 }
 
 export function buildEmailContent(payload: DispatchPayload): { text: string; html?: string } {
@@ -148,11 +202,18 @@ export function buildEmailContent(payload: DispatchPayload): { text: string; htm
 
   if (payload.mode === 'tracking' && payload.trackingId) {
     const pixelUrl = `${payload.appBaseUrl}/api/track/open/${payload.trackingId}.gif`;
-    htmlBody += `\n<img src="${pixelUrl}" alt="" width="1" height="1" style="display:block;border:0;opacity:0;" />`;
+    const pixelTag = `<img src="${pixelUrl}" alt="" width="1" height="1" border="0" style="height:1px !important;width:1px !important;border-width:0 !important;margin:0 !important;padding:0 !important;" />`;
+    if (/<\/body>/i.test(htmlBody)) {
+      htmlBody = htmlBody.replace(/<\/body>/i, `${pixelTag}</body>`);
+    } else {
+      htmlBody += `\n${pixelTag}`;
+    }
   }
 
+  const plainFallback = htmlToCleanPlainText(personalizedBody);
+
   return {
-    text: personalizedBody.replace(/<[^>]+>/g, ''),
+    text: plainFallback || personalizedBody.replace(/<[^>]+>/g, '').trim(),
     html: htmlBody,
   };
 }
@@ -173,17 +234,18 @@ function buildTransportOptions(params: {
   const isImplicitSsl = enc === 'ssl' || params.port === 465;
 
   return {
-    ...(params.pooled ? { pool: true, maxConnections: 10, maxMessages: 500 } : {}),
-    host: params.host,
+    ...(params.pooled ? { pool: true, maxConnections: 5, maxMessages: 200 } : {}),
+    host: params.host.trim(),
     port: params.port,
     secure: isImplicitSsl,
     ignoreTLS: enc === 'none' && !isImplicitSsl,
-    auth: params.username ? { user: params.username, pass: params.password } : undefined,
+    auth: params.username ? { user: params.username.trim(), pass: params.password } : undefined,
     tls: {
       rejectUnauthorized: false,
     },
-    connectionTimeout: 6500,
-    greetingTimeout: 6500,
+    connectionTimeout: 15000,
+    greetingTimeout: 15000,
+    socketTimeout: 25000,
   };
 }
 
@@ -264,6 +326,19 @@ type SmtpTransporter = ReturnType<typeof nodemailer.createTransport>;
 
 const transporterPoolMap = new Map<string, { key: string; transporter: SmtpTransporter }>();
 
+function evictPooledTransporter(userId: string, nodeId: string): void {
+  const poolKey = `${userId}:${nodeId}`;
+  const existing = transporterPoolMap.get(poolKey);
+  if (existing) {
+    try {
+      existing.transporter.close();
+    } catch {
+      // ignore close errors
+    }
+    transporterPoolMap.delete(poolKey);
+  }
+}
+
 function getPooledTransporterForNode(userId: string, node: StoredSmtpNode): SmtpTransporter {
   const enc = node.encryption || (node.secure ? 'ssl' : 'tls');
   const poolKey = `${userId}:${node.id}`;
@@ -271,6 +346,9 @@ function getPooledTransporterForNode(userId: string, node: StoredSmtpNode): Smtp
   const existing = transporterPoolMap.get(poolKey);
   if (existing && existing.key === configKey) {
     return existing.transporter;
+  }
+  if (existing) {
+    evictPooledTransporter(userId, node.id);
   }
   const transporter = nodemailer.createTransport(
     buildTransportOptions({
@@ -356,149 +434,243 @@ export async function dispatchSingleEmail(payload: DispatchPayload): Promise<Dis
   const content = buildEmailContent(payload);
 
   const hasConfiguredPool = ws.smtpPool.some(
-    (n) => n.host?.trim() && n.username?.trim() && n.rawPassword && n.rawPassword !== 'virtual_high_speed_secret'
+    (n) =>
+      n.host?.trim() &&
+      n.username?.trim() &&
+      n.rawPassword &&
+      n.rawPassword !== 'virtual_high_speed_secret'
   );
 
-  if (hasConfiguredPool) {
-    const candidates = getOrderedReadySmtpCandidates(uid);
+  if (!hasConfiguredPool) {
+    return {
+      ok: false,
+      smtpCode: 'NO_SMTP',
+      errorMessage:
+        'No active SMTP account is plugged in. Please add a working SMTP in SMTP Settings and click Resume.',
+      failureKind: 'smtp_error',
+      latencyMs: Math.max(5, Date.now() - start),
+    };
+  }
 
-    if (candidates.length === 0) {
-      const anyCooling = ws.smtpPool.some((n) => n.status === 'cooling_down');
+  const candidates = getOrderedReadySmtpCandidates(uid);
+
+  if (candidates.length === 0) {
+    const anyCooling = ws.smtpPool.some((n) => n.status === 'cooling_down');
+    const anyErrorNode = ws.smtpPool.find((n) => n.status === 'error');
+    const anyQuotaNode = ws.smtpPool.find((n) => n.status === 'quota_reached');
+    if (anyCooling) {
       return {
         ok: false,
-        smtpCode: anyCooling ? '451' : '550 5.4.5',
-        errorMessage: anyCooling
-          ? 'All plugged-in SMTP accounts are cooling down from temporary deferrals.'
-          : 'All plugged-in SMTP accounts have reached their send limits or stopped.',
-        failureKind: anyCooling ? 'deferred' : 'max_quota',
+        smtpCode: '451',
+        errorMessage: 'All plugged-in SMTP accounts are cooling down from temporary deferrals.',
+        failureKind: 'deferred',
         latencyMs: Math.max(10, Date.now() - start),
       };
     }
+    if (anyErrorNode && !anyQuotaNode) {
+      return {
+        ok: false,
+        smtpCode: 'SMTP_ERR',
+        errorMessage:
+          anyErrorNode.statusReason ||
+          'All plugged-in SMTP accounts stopped due to an authentication, sender, or connection error.',
+        failureKind: 'smtp_error',
+        usedSmtpLabel: formatNodeTag(anyErrorNode),
+        latencyMs: Math.max(10, Date.now() - start),
+      };
+    }
+    return {
+      ok: false,
+      smtpCode: '550 5.4.5',
+      errorMessage: 'All plugged-in SMTP accounts have reached their send limits or stopped.',
+      failureKind: 'max_quota',
+      latencyMs: Math.max(10, Date.now() - start),
+    };
+  }
 
-    let firstStoppedLabel: string | undefined;
-    let poolMutated = false;
-    let lastClassification: ReturnType<typeof classifySmtpFailure> | null = null;
-    let sawDeferred = false;
+  let firstStoppedLabel: string | undefined;
+  let lastAttemptedLabel: string | undefined;
+  let poolMutated = false;
+  let lastClassification: ReturnType<typeof classifySmtpFailure> | null = null;
+  let sawDeferred = false;
+  let sawMaxQuota = false;
 
-    for (let i = 0; i < candidates.length; i++) {
-      const node = candidates[i];
+  const cleanFromEmail = payload.fromEmail.trim();
+  const cleanFromName = payload.fromName.trim();
+  const cleanRecipientEmail = payload.recipient.email.trim();
+  const cleanRecipientName = payload.recipient.firstName?.trim() || '';
+  const cleanReplyToEmail = payload.replyToEmail?.trim() || '';
+  const cleanReplyToName = payload.replyToName?.trim() || '';
+
+  const toAddress = cleanRecipientName
+    ? { name: cleanRecipientName, address: cleanRecipientEmail }
+    : cleanRecipientEmail;
+
+  const baseReplyTo = cleanReplyToEmail
+    ? cleanReplyToName
+      ? { name: cleanReplyToName, address: cleanReplyToEmail }
+      : cleanReplyToEmail
+    : undefined;
+
+  for (let i = 0; i < candidates.length; i++) {
+    const node = candidates[i];
+    const nodeLabel = formatNodeTag(node);
+    lastAttemptedLabel = nodeLabel;
+    const authEmail = node.username.trim().includes('@') ? node.username.trim() : '';
+
+    try {
+      const transporter = getPooledTransporterForNode(uid, node);
+      const primaryFrom = cleanFromName
+        ? { name: cleanFromName, address: cleanFromEmail }
+        : cleanFromEmail;
+
       try {
-        const transporter = getPooledTransporterForNode(uid, node);
         await transporter.sendMail({
-          from: payload.fromName ? `"${payload.fromName}" <${payload.fromEmail}>` : payload.fromEmail,
-          to: payload.recipient.firstName
-            ? `"${payload.recipient.firstName}" <${payload.recipient.email}>`
-            : payload.recipient.email,
-          replyTo: payload.replyToEmail
-            ? payload.replyToName
-              ? `"${payload.replyToName}" <${payload.replyToEmail}>`
-              : payload.replyToEmail
-            : undefined,
+          from: primaryFrom,
+          to: toAddress,
+          replyTo: baseReplyTo,
           subject: personalizedSubject,
           text: content.text,
           html: content.html,
         });
-
-        node.sentCount = (node.sentCount || 0) + 1;
-        node.status = 'ready';
-        node.statusReason = null;
-        node.cooldownUntil = null;
-
-        if (ws.activeSmtpId !== node.id) {
-          ws.activeSmtpId = node.id;
-          poolMutated = true;
+      } catch (firstErr) {
+        // Automatic deliverability fallback if the SMTP server strictly requires MAIL FROM or From
+        // to match the authenticated SMTP mailbox when user typed a custom From address
+        if (
+          authEmail &&
+          authEmail.toLowerCase() !== cleanFromEmail.toLowerCase() &&
+          isSenderIdentityRejection(firstErr)
+        ) {
+          try {
+            // Try 2A: Keep user's custom From header, set SMTP Envelope MAIL FROM to authenticated mailbox
+            await transporter.sendMail({
+              from: primaryFrom,
+              envelope: {
+                from: authEmail,
+                to: cleanRecipientEmail,
+              },
+              to: toAddress,
+              replyTo: baseReplyTo,
+              subject: personalizedSubject,
+              text: content.text,
+              html: content.html,
+            });
+          } catch (secondErr) {
+            if (isSenderIdentityRejection(secondErr)) {
+              // Try 2B: Server enforces header From == authenticated mailbox (e.g. Gmail/Zoho/Hostinger);
+              // preserve sender display name & route replies to user's custom address so mail delivers!
+              const fallbackReplyTo =
+                baseReplyTo ||
+                (cleanFromName
+                  ? { name: cleanFromName, address: cleanFromEmail }
+                  : cleanFromEmail);
+              await transporter.sendMail({
+                from: cleanFromName ? { name: cleanFromName, address: authEmail } : authEmail,
+                to: toAddress,
+                replyTo: fallbackReplyTo,
+                subject: personalizedSubject,
+                text: content.text,
+                html: content.html,
+              });
+            } else {
+              throw secondErr;
+            }
+          }
+        } else {
+          throw firstErr;
         }
-        store.syncActiveSmtpFromPool(uid);
+      }
 
+      node.sentCount = (node.sentCount || 0) + 1;
+      node.status = 'ready';
+      node.statusReason = null;
+      node.cooldownUntil = null;
+
+      if (ws.activeSmtpId !== node.id) {
+        ws.activeSmtpId = node.id;
+        poolMutated = true;
+      }
+      store.syncActiveSmtpFromPool(uid);
+
+      return {
+        ok: true,
+        smtpCode: '250 2.0.0 OK',
+        latencyMs: Math.max(12, Date.now() - start),
+        usedSmtpLabel: nodeLabel,
+        switchedFromLabel: firstStoppedLabel,
+        switchedToLabel: firstStoppedLabel ? nodeLabel : undefined,
+        poolMutated,
+      };
+    } catch (err) {
+      const classified = classifySmtpFailure(err);
+      lastClassification = classified;
+
+      // If it's just a single invalid recipient email (550 user unknown), keep this SMTP active!
+      if (classified.failureKind === 'bounce') {
         return {
-          ok: true,
-          smtpCode: '250 2.0.0 OK',
-          latencyMs: Math.max(12, Date.now() - start),
-          usedSmtpLabel: formatNodeTag(node),
-          switchedFromLabel: firstStoppedLabel,
-          switchedToLabel: firstStoppedLabel ? formatNodeTag(node) : undefined,
+          ok: false,
+          smtpCode: classified.smtpCode,
+          errorMessage: classified.errorMessage,
+          failureKind: 'bounce',
+          latencyMs: Math.max(20, Date.now() - start),
+          usedSmtpLabel: nodeLabel,
           poolMutated,
         };
-      } catch (err) {
-        const classified = classifySmtpFailure(err);
-        lastClassification = classified;
-
-        // If it's just a single invalid recipient email (550 user unknown), keep this SMTP active!
-        if (classified.failureKind === 'bounce') {
-          return {
-            ok: false,
-            smtpCode: classified.smtpCode,
-            errorMessage: classified.errorMessage,
-            failureKind: 'bounce',
-            latencyMs: Math.max(20, Date.now() - start),
-            usedSmtpLabel: formatNodeTag(node),
-            poolMutated,
-          };
-        }
-
-        // Otherwise, this SMTP stopped (deferred limit, max send quota, or server/auth error):
-        // Mark it immediately and auto-switch to the next available SMTP in the loop!
-        if (!firstStoppedLabel) {
-          firstStoppedLabel = formatNodeTag(node);
-        }
-        poolMutated = true;
-
-        if (classified.failureKind === 'deferred') {
-          sawDeferred = true;
-          node.status = 'cooling_down';
-          node.cooldownUntil = new Date(Date.now() + 15 * 60 * 1000).toISOString();
-          node.statusReason = 'Deferred / hourly limit — cooling down 15m';
-        } else if (classified.failureKind === 'max_quota') {
-          node.status = 'quota_reached';
-          node.cooldownUntil = null;
-          node.statusReason = 'Maximum send limit reached';
-        } else {
-          node.status = 'error';
-          node.cooldownUntil = null;
-          node.statusReason = classified.errorMessage.slice(0, 100);
-        }
-
-        // Pre-advance activeSmtpId to the next ready node if available
-        const nextReady = candidates[i + 1];
-        if (nextReady) {
-          ws.activeSmtpId = nextReady.id;
-        }
-        store.syncActiveSmtpFromPool(uid);
       }
+
+      // Evict broken/stale pooled socket so subsequent retries establish a clean TCP/TLS session
+      evictPooledTransporter(uid, node.id);
+
+      // Otherwise, this SMTP stopped (deferred limit, max send quota, or server/auth error):
+      // Mark it immediately and auto-switch to the next available SMTP in the loop!
+      if (!firstStoppedLabel) {
+        firstStoppedLabel = nodeLabel;
+      }
+      poolMutated = true;
+
+      if (classified.failureKind === 'deferred') {
+        sawDeferred = true;
+        node.status = 'cooling_down';
+        node.cooldownUntil = new Date(Date.now() + 15 * 60 * 1000).toISOString();
+        node.statusReason = `Deferred (${classified.smtpCode}): ${classified.errorMessage.slice(0, 90)}`;
+      } else if (classified.failureKind === 'max_quota') {
+        sawMaxQuota = true;
+        node.status = 'quota_reached';
+        node.cooldownUntil = null;
+        node.statusReason = `Quota reached (${classified.smtpCode}): ${classified.errorMessage.slice(0, 90)}`;
+      } else {
+        node.status = 'error';
+        node.cooldownUntil = null;
+        node.statusReason = `SMTP Error (${classified.smtpCode}): ${classified.errorMessage.slice(0, 110)}`;
+      }
+
+      // Pre-advance activeSmtpId to the next ready node if available
+      const nextReady = candidates[i + 1];
+      if (nextReady) {
+        ws.activeSmtpId = nextReady.id;
+      }
+      store.syncActiveSmtpFromPool(uid);
     }
-
-    // Every available SMTP in the pool stopped at once
-    return {
-      ok: false,
-      smtpCode: lastClassification?.smtpCode || '451',
-      errorMessage:
-        lastClassification?.errorMessage ||
-        'All plugged-in SMTP accounts hit their send limits or stopped.',
-      failureKind: sawDeferred ? 'deferred' : 'max_quota',
-      latencyMs: Math.max(25, Date.now() - start),
-      poolMutated,
-    };
   }
 
-  // High-speed virtual cluster dispatch (for instant testing & 10,000/sec burst benchmarks without external spam)
-  const emailLower = payload.recipient.email.toLowerCase();
-  if (
-    emailLower.includes('bounce') ||
-    emailLower.includes('invalid') ||
-    emailLower.endsWith('.invalid')
-  ) {
-    return {
-      ok: false,
-      smtpCode: '550 5.1.1',
-      errorMessage: 'Recipient mailbox unavailable or rejected by remote MX policy.',
-      latencyMs: 16,
-    };
-  }
+  const finalFailureKind: 'deferred' | 'max_quota' | 'smtp_error' = sawDeferred
+    ? 'deferred'
+    : sawMaxQuota
+      ? 'max_quota'
+      : (lastClassification?.failureKind === 'bounce'
+          ? 'smtp_error'
+          : lastClassification?.failureKind) || 'smtp_error';
 
   return {
-    ok: true,
-    smtpCode: '250 2.0.0 OK',
-    latencyMs: 14,
+    ok: false,
+    smtpCode: lastClassification?.smtpCode || 'SMTP_ERR',
+    errorMessage:
+      lastClassification?.errorMessage ||
+      'All plugged-in SMTP accounts failed to deliver or stopped.',
+    failureKind: finalFailureKind,
+    usedSmtpLabel: lastAttemptedLabel,
+    latencyMs: Math.max(25, Date.now() - start),
+    poolMutated,
   };
 }
 

@@ -144,7 +144,7 @@ class QueueWorkerEngine {
 
       const remaining = job.totalRecipients - job.processedCount;
       if (remaining <= 0) {
-        job.status = 'completed';
+        job.status = job.sentCount === 0 && job.failedCount > 0 ? 'failed' : 'completed';
         job.completedAt = this.formatNow();
         job.currentThroughputPerSec = 0;
         stateMutated = true;
@@ -160,7 +160,7 @@ class QueueWorkerEngine {
         const targetPerSec = Math.min(10000, Math.max(500, job.burstTargetPerSec || 10000));
         batchToProcess = Math.min(remaining, Math.ceil(targetPerSec * 0.25));
       } else {
-        // Hourly Queue or Auto-Warmup Stepper (50, 100, 200, 300, 400, 500, 750, 1000 emails/hour)
+        // Hourly Queue or Auto-Warmup Stepper (50, 100, 200, 300, 400, 500, 1000 emails/hour)
         if (job.dispatchMode === 'auto_warmup') {
           const progressRatio = job.processedCount / Math.max(1, job.totalRecipients);
           const desiredStage = Math.min(
@@ -183,7 +183,13 @@ class QueueWorkerEngine {
 
         const effectiveHourly = job.hourlyRateLimit * (job.timeScaleMultiplier || 1);
         const tokensPerTick = effectiveHourly / 3600 / 4; // 4 ticks per second
-        const currentTokens = (this.tokenBuckets.get(job.id) || 0) + tokensPerTick;
+        // Seed 1.0 token on first tick of a fresh job so Email #1 dispatches immediately instead of waiting 72s at 50/hr
+        const baseTokens = this.tokenBuckets.has(job.id)
+          ? this.tokenBuckets.get(job.id)!
+          : job.processedCount === 0
+            ? 1
+            : 0;
+        const currentTokens = baseTokens + tokensPerTick;
 
         if (currentTokens >= 1) {
           batchToProcess = Math.min(remaining, Math.floor(currentTokens));
@@ -199,87 +205,117 @@ class QueueWorkerEngine {
       const startIndex = job.processedCount;
       const ws = store.getWorkspace(ownerId);
       const isLiveSmtpActive =
-        ws.smtpPool.length > 0 ||
+        ws.smtpPool.some(
+          (n) =>
+            n.host?.trim() &&
+            n.username?.trim() &&
+            n.rawPassword &&
+            n.rawPassword !== 'virtual_high_speed_secret'
+        ) ||
         Boolean(
           ws.smtp.useRealSmtp &&
+            ws.smtp.host?.trim() &&
+            ws.smtp.username?.trim() &&
             ws.smtp.rawPassword &&
             ws.smtp.rawPassword !== 'virtual_high_speed_secret'
         );
-      const effectiveBatch = isLiveSmtpActive ? Math.min(batchToProcess, 20) : batchToProcess;
-      const endIndex = Math.min(job.totalRecipients, startIndex + effectiveBatch);
 
       // Route traffic across healthy multi-region load balancer nodes
       const targetRegion = store.selectHealthyRegion(job.region);
       job.region = targetRegion.id;
 
+      if (!isLiveSmtpActive) {
+        job.status = 'paused';
+        job.limitType = 'smtp_error';
+        job.currentThroughputPerSec = 0;
+        job.autoResumeAt = null;
+        job.lastSmtpError =
+          'No active SMTP account plugged in. Add a working SMTP server in SMTP Settings, then click Resume.';
+        job.lastSmtpErrorAt = this.formatNow();
+        job.pauseReason =
+          'Reason: No active SMTP account is plugged in. Please add your SMTP credentials in SMTP Settings, then click Resume.';
+        this.broadcast('job:updated', stripRecipients(job), ownerId);
+        continue;
+      }
+
+      const effectiveBatch = Math.min(batchToProcess, 20);
+      const endIndex = Math.min(job.totalRecipients, startIndex + effectiveBatch);
+
       let sentInThisJobTick = 0;
       let smtpPoolBroadcastNeeded = false;
 
-      if (isLiveSmtpActive) {
-        // Real Nodemailer Multi-SMTP dispatch with automatic instant failover across all plugged-in SMTPs
-        for (let idx = startIndex; idx < endIndex; idx++) {
-          const recipient = job.recipients[idx] || {
-            firstName: `User${idx + 1}`,
-            email: `recipient${idx + 1}@example.com`,
-          };
-          const trackingId = `trk_${job.id}_${idx}`;
-          const res = await dispatchSingleEmail({
-            userId: ownerId,
-            subject: job.subject,
-            fromName: job.fromName,
-            fromEmail: job.fromEmail,
-            replyToName: job.replyToName,
-            replyToEmail: job.replyToEmail,
-            mode: job.mode,
-            body: job.body,
-            recipient,
-            trackingId,
-            appBaseUrl: (job.appOrigin || this.getAppBaseUrl()).replace(/\/$/, ''),
+      // Real Nodemailer Multi-SMTP dispatch with automatic instant failover across all plugged-in SMTPs
+      for (let idx = startIndex; idx < endIndex; idx++) {
+        const recipient = job.recipients[idx] || {
+          firstName: `User${idx + 1}`,
+          email: `recipient${idx + 1}@example.com`,
+        };
+        const trackingId = `trk_${job.id}_${idx}`;
+        const res = await dispatchSingleEmail({
+          userId: ownerId,
+          subject: job.subject,
+          fromName: job.fromName,
+          fromEmail: job.fromEmail,
+          replyToName: job.replyToName,
+          replyToEmail: job.replyToEmail,
+          mode: job.mode,
+          body: job.body,
+          recipient,
+          trackingId,
+          appBaseUrl: (job.appOrigin || this.getAppBaseUrl()).replace(/\/$/, ''),
+        });
+
+        if (res.poolMutated) {
+          smtpPoolBroadcastNeeded = true;
+        }
+
+        if (res.switchedFromLabel && res.switchedToLabel) {
+          job.failoverCount = (job.failoverCount || 0) + 1;
+          this.pushAlert({
+            ownerId,
+            severity: 'info',
+            title: `Auto-Switched SMTP: ${res.switchedToLabel}`,
+            message: `${res.switchedFromLabel} stopped — automatically switched to ${res.switchedToLabel} and kept sending uninterrupted.`,
+            service: 'smtp-relay',
           });
+        }
 
-          if (res.poolMutated) {
-            smtpPoolBroadcastNeeded = true;
-          }
+        if (res.usedSmtpLabel) {
+          job.activeSmtpLabel = res.usedSmtpLabel;
+        }
 
-          if (res.switchedFromLabel && res.switchedToLabel) {
-            job.failoverCount = (job.failoverCount || 0) + 1;
-            this.pushAlert({
+        if (res.ok) {
+          job.processedCount += 1;
+          job.sentCount += 1;
+          sentInThisJobTick += 1;
+          smtpPoolBroadcastNeeded = true;
+          totalSentThisTick += 1;
+          if (job.mode === 'tracking' && store.state.tracking.length < 4000) {
+            store.state.tracking.unshift({
+              id: trackingId,
               ownerId,
-              severity: 'info',
-              title: `Auto-Switched SMTP: ${res.switchedToLabel}`,
-              message: `${res.switchedFromLabel} stopped — automatically switched to ${res.switchedToLabel} and kept sending uninterrupted.`,
-              service: 'smtp-relay',
+              jobId: job.id,
+              campaignName: job.campaignName,
+              recipientEmail: recipient.email,
+              recipientName: recipient.firstName || recipient.email.split('@')[0],
+              opens: 0,
+              clicks: 0,
+              converted: false,
+              firstOpenedAt: null,
+              lastOpenedAt: null,
+              status: 'delivered',
+              region: targetRegion.id,
             });
           }
+        } else {
+          // Persist exact SMTP error summary directly on the job so Queue ALWAYS displays it even after 100% completion
+          const rawDetail = (res.errorMessage || 'SMTP delivery failed').replace(/\s+/g, ' ').trim();
+          const smtpTag = res.usedSmtpLabel ? `[${res.usedSmtpLabel}] ` : '';
+          const codeTag = res.smtpCode ? `${res.smtpCode}: ` : '';
+          job.lastSmtpError = `${smtpTag}${codeTag}${rawDetail}`.slice(0, 300);
+          job.lastSmtpErrorAt = this.formatNow();
 
-          if (res.usedSmtpLabel) {
-            job.activeSmtpLabel = res.usedSmtpLabel;
-          }
-
-          if (res.ok) {
-            job.processedCount += 1;
-            job.sentCount += 1;
-            sentInThisJobTick += 1;
-            smtpPoolBroadcastNeeded = true;
-            totalSentThisTick += 1;
-            if (job.mode === 'tracking' && store.state.tracking.length < 4000) {
-              store.state.tracking.unshift({
-                id: trackingId,
-                ownerId,
-                jobId: job.id,
-                campaignName: job.campaignName,
-                recipientEmail: recipient.email,
-                recipientName: recipient.firstName || recipient.email.split('@')[0],
-                opens: 0,
-                clicks: 0,
-                converted: false,
-                firstOpenedAt: null,
-                lastOpenedAt: null,
-                status: 'delivered',
-                region: targetRegion.id,
-              });
-            }
-          } else if (res.failureKind === 'deferred') {
+          if (res.failureKind === 'deferred') {
             // Every plugged-in SMTP is currently deferred/cooling down: hold unsent emails safely!
             job.retriedCount += 1;
             job.status = 'paused';
@@ -287,67 +323,53 @@ class QueueWorkerEngine {
             job.currentThroughputPerSec = 0;
             const cooldownIso = new Date(Date.now() + 15 * 60 * 1000).toISOString();
             job.autoResumeAt = cooldownIso;
-            const cleanDetail = (res.errorMessage || 'Temporary SMTP defer / rate limit')
-              .replace(/\s+/g, ' ')
-              .slice(0, 160);
+            const cleanDetail = rawDetail.slice(0, 180);
             const smtpSource = res.usedSmtpLabel ? ` on ${res.usedSmtpLabel}` : '';
-            const codePrefix = res.smtpCode ? `${res.smtpCode}: ` : '';
             job.pauseReason =
               ws.smtpPool.length > 1
-                ? `Reason: All ${ws.smtpPool.length} plugged-in SMTPs hit temporary defer / hourly rate limits${smtpSource} (${codePrefix}${cleanDetail}). Automatically resumes in 15 minutes from email #${job.processedCount + 1}, or plug in another SMTP and click Resume now.`
-                : `Reason: SMTP Deferred / Hourly Rate Limit reached${smtpSource} (${codePrefix}${cleanDetail}). Automatically resumes in 15 minutes from email #${job.processedCount + 1}, or plug in another SMTP and click Resume now.`;
+                ? `Reason: All ${ws.smtpPool.length} plugged-in SMTPs hit temporary defer / hourly rate limits${smtpSource} (${codeTag}${cleanDetail}). Automatically resumes in 15 minutes from email #${job.processedCount + 1}, or plug in another SMTP and click Resume now.`
+                : `Reason: SMTP Deferred / Hourly Rate Limit reached${smtpSource} (${codeTag}${cleanDetail}). Automatically resumes in 15 minutes from email #${job.processedCount + 1}, or plug in another SMTP and click Resume now.`;
             this.recordFailure(
               job,
               recipient.email,
               res.smtpCode,
-              res.errorMessage || 'Temporary SMTP defer / throttle',
+              `${smtpTag}${rawDetail}`,
               targetRegion.id
             );
             this.pushAlert({
               ownerId,
               severity: 'warning',
               title: `SMTP Deferred Limit — Cooling Down 15m`,
-              message: `"${job.campaignName}" hit temporary deferrals (${codePrefix}${cleanDetail}) at email #${idx + 1}. Remaining ${job.totalRecipients - job.processedCount} emails are safely held and will auto-resume in 15m.`,
+              message: `"${job.campaignName}" hit temporary deferrals (${codeTag}${cleanDetail}) at email #${idx + 1}. Remaining ${job.totalRecipients - job.processedCount} emails are safely held and will auto-resume in 15m.`,
               service: 'smtp-relay',
             });
             break;
           } else if (res.failureKind === 'max_quota' || res.failureKind === 'smtp_error') {
-            // Every plugged-in SMTP reached max quota or encountered an auth/connection error: protect remaining emails!
+            // Every plugged-in SMTP reached max quota or encountered an auth/sender/connection error: protect remaining emails!
             job.status = 'paused';
             job.limitType = res.failureKind === 'smtp_error' ? 'smtp_error' : 'max_quota';
             job.currentThroughputPerSec = 0;
             job.autoResumeAt = null;
-            const cleanDetail = (
-              res.errorMessage ||
-              (res.failureKind === 'smtp_error'
-                ? 'SMTP login or connection rejected'
-                : 'Maximum daily send quota reached')
-            )
-              .replace(/\s+/g, ' ')
-              .slice(0, 160);
+            const cleanDetail = rawDetail.slice(0, 180);
             const smtpSource = res.usedSmtpLabel ? ` on ${res.usedSmtpLabel}` : '';
-            const codePrefix = res.smtpCode ? `${res.smtpCode}: ` : '';
 
             if (res.failureKind === 'smtp_error') {
               job.pauseReason =
                 ws.smtpPool.length > 1
-                  ? `Reason: All ${ws.smtpPool.length} plugged-in SMTPs failed authentication, sender policy, or connection${smtpSource} (${codePrefix}${cleanDetail}). Manual action needed: update your SMTP password/host/From Email in SMTP Settings or add a working SMTP, then click Resume.`
-                  : `Reason: SMTP Login / Connection Error${smtpSource} (${codePrefix}${cleanDetail}). Manual action needed: check your SMTP password, host, or From Email in SMTP Settings (or add another SMTP), then click Resume.`;
+                  ? `Reason: All ${ws.smtpPool.length} plugged-in SMTPs failed authentication, sender policy, or connection${smtpSource} (${codeTag}${cleanDetail}). Manual action needed: check your SMTP password/host/From Email in SMTP Settings or add a working SMTP, then click Resume.`
+                  : `Reason: SMTP Error${smtpSource} (${codeTag}${cleanDetail}). Manual action needed: check your SMTP password, host, port, or From Email in SMTP Settings (or add another SMTP), then click Resume.`;
             } else {
               job.pauseReason =
                 ws.smtpPool.length > 1
-                  ? `Reason: All ${ws.smtpPool.length} plugged-in SMTPs reached their maximum / daily sending limit${smtpSource} (${codePrefix}${cleanDetail}). Manual action needed: add another SMTP in SMTP Settings or wait for your quota reset, then click Resume.`
-                  : `Reason: SMTP Maximum / Daily Send Quota reached${smtpSource} (${codePrefix}${cleanDetail}). Manual action needed: add another SMTP in SMTP Settings or wait for your quota reset, then click Resume.`;
+                  ? `Reason: All ${ws.smtpPool.length} plugged-in SMTPs reached their maximum / daily sending limit${smtpSource} (${codeTag}${cleanDetail}). Manual action needed: add another SMTP in SMTP Settings or wait for your quota reset, then click Resume.`
+                  : `Reason: SMTP Maximum / Daily Send Quota reached${smtpSource} (${codeTag}${cleanDetail}). Manual action needed: add another SMTP in SMTP Settings or wait for your quota reset, then click Resume.`;
             }
 
             this.recordFailure(
               job,
               recipient.email,
               res.smtpCode,
-              res.errorMessage ||
-                (res.failureKind === 'smtp_error'
-                  ? 'SMTP login or connection error'
-                  : 'Maximum SMTP send quota reached'),
+              `${smtpTag}${rawDetail}`,
               targetRegion.id
             );
             this.pushAlert({
@@ -355,77 +377,25 @@ class QueueWorkerEngine {
               severity: 'critical',
               title:
                 res.failureKind === 'smtp_error'
-                  ? 'SMTP Connection / Auth Error — Queue Paused'
+                  ? 'SMTP Error — Queue Paused'
                   : 'All Available SMTPs Reached Quota Limit',
-              message: `"${job.campaignName}" auto-paused at email #${idx + 1} (${codePrefix}${cleanDetail}). ${job.totalRecipients - job.processedCount} remaining emails are safely saved in queue.`,
+              message: `"${job.campaignName}" auto-paused at email #${idx + 1} (${codeTag}${cleanDetail}). ${job.totalRecipients - job.processedCount} remaining emails are safely saved in queue.`,
               service: 'smtp-relay',
             });
             break;
           } else {
-            // Single bad recipient address (550 bounce): skip only this bad address and keep sending to everyone else
+            // Single bad recipient address (550 mailbox bounce): skip only this bad address and keep sending to everyone else
             job.processedCount += 1;
             job.failedCount += 1;
             this.recordFailure(
               job,
               recipient.email,
               res.smtpCode,
-              res.errorMessage || 'Recipient mailbox rejected',
+              `${smtpTag}${rawDetail}`,
               targetRegion.id
             );
           }
         }
-      } else {
-        // High-speed vectorized cluster dispatch (handles up to 10,000 emails/sec without blocking event loop)
-        let batchSent = 0;
-        let batchFailed = 0;
-
-        for (let idx = startIndex; idx < endIndex; idx++) {
-          const recipient = job.recipients[idx];
-          const email = recipient?.email || `subscriber${idx + 1}@enterprise-mail.org`;
-          const isExplicitBounce =
-            email.toLowerCase().includes('bounce') || email.toLowerCase().includes('invalid');
-
-          if (isExplicitBounce) {
-            batchFailed += 1;
-            this.recordFailure(
-              job,
-              email,
-              '550 5.1.1',
-              'Mailbox does not exist or rejected by recipient domain policy.',
-              targetRegion.id
-            );
-          } else {
-            batchSent += 1;
-            if (job.mode === 'tracking' && (effectiveBatch <= 500 || idx % 25 === 0)) {
-              const trackingId = `trk_${job.id}_${idx}`;
-              store.state.tracking.unshift({
-                id: trackingId,
-                ownerId,
-                jobId: job.id,
-                campaignName: job.campaignName,
-                recipientEmail: email,
-                recipientName: recipient?.firstName || email.split('@')[0],
-                opens: 0,
-                clicks: 0,
-                converted: false,
-                firstOpenedAt: null,
-                lastOpenedAt: null,
-                status: 'delivered',
-                region: targetRegion.id,
-              });
-            }
-          }
-        }
-
-        if (store.state.tracking.length > 4000) {
-          store.state.tracking.length = 4000;
-        }
-
-        job.processedCount += effectiveBatch;
-        job.sentCount += batchSent;
-        job.failedCount += batchFailed;
-        sentInThisJobTick = batchSent;
-        totalSentThisTick += batchSent;
       }
 
       const processedDelta = job.processedCount - startIndex;
@@ -446,7 +416,7 @@ class QueueWorkerEngine {
       }
 
       if (job.processedCount >= job.totalRecipients) {
-        job.status = 'completed';
+        job.status = job.sentCount === 0 && job.failedCount > 0 ? 'failed' : 'completed';
         job.completedAt = this.formatNow();
         job.currentThroughputPerSec = 0;
         this.tokenBuckets.delete(job.id);

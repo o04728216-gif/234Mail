@@ -1723,7 +1723,7 @@ async function bootstrap() {
         'Reason: Paused manually by you — stays paused until you click Resume.';
       job.autoResumeAt = null;
     } else if (
-      (action === 'resume' && job.status === 'paused') ||
+      (action === 'resume' && (job.status === 'paused' || job.status === 'failed')) ||
       (action === 'start_now' && job.status === 'scheduled')
     ) {
       const jobOwner = store.state.users.find((u) => u.id === jobOwnerId);
@@ -1733,6 +1733,11 @@ async function bootstrap() {
             'Your account must be Paid and Active to send or resume emails. Please complete payment on the Subscription page.',
         });
         return;
+      }
+      if (job.status === 'failed' && job.sentCount === 0) {
+        job.processedCount = 0;
+        job.failedCount = 0;
+        job.completedAt = null;
       }
       job.status = 'running';
       job.pauseReason = null;

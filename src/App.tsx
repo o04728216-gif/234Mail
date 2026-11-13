@@ -33,6 +33,7 @@ import { LANGUAGE_LABELS, THEME_OPTIONS, t } from './i18n';
 import type {
   AdminResetSmtpConfig,
   DashboardSnapshot,
+  DeliveryErrorLog,
   DraftItem,
   InboxMessage,
   InboxSyncInfo,
@@ -396,6 +397,14 @@ export default function App() {
                   ...prev,
                   smtp: updatedPool.smtp,
                   smtpPool: updatedPool.smtpPool,
+                };
+              }
+              case 'error:logged': {
+                const errEntry = msg.payload as DeliveryErrorLog;
+                if (prev.errors.some((e) => e.id === errEntry.id)) return prev;
+                return {
+                  ...prev,
+                  errors: [errEntry, ...prev.errors].slice(0, 200),
                 };
               }
               default:
@@ -1017,6 +1026,7 @@ export default function App() {
                 token={token}
                 snapshot={snapshot}
                 lang={lang}
+                isActive={activeTab === 'compose'}
                 initialDraft={draftToEdit}
                 onClearInitialDraft={() => setDraftToEdit(null)}
                 onJobCreated={(job) =>
@@ -1035,6 +1045,7 @@ export default function App() {
                   setSnapshot((prev) => (prev ? { ...prev, drafts } : prev))
                 }
                 onNavigateQueue={() => selectTab('queue')}
+                onNavigateSmtp={() => selectTab('smtp')}
                 onNavigateSubscription={() => selectTab('subscription')}
               />
             </div>
@@ -1043,6 +1054,7 @@ export default function App() {
               <QueueMonitorView
                 token={token}
                 snapshot={snapshot}
+                onNavigateSmtp={() => selectTab('smtp')}
                 onJobUpdated={(job) =>
                   setSnapshot((prev) =>
                     prev

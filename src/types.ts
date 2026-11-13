@@ -162,6 +162,8 @@ export interface QueueJob {
   autoResumeAt?: string | null;
   activeSmtpLabel?: string | null;
   failoverCount?: number;
+  lastSmtpError?: string | null;
+  lastSmtpErrorAt?: string | null;
 }
 
 export interface TrackingRecord {

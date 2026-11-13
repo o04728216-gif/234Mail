@@ -102,11 +102,13 @@ export const SentCampaignsView: React.FC<SentCampaignsViewProps> = ({ snapshot }
               </div>
               <span
                 className={`px-2 py-0.5 rounded border text-[10px] font-mono font-bold uppercase shrink-0 ${
-                  j.status === 'completed'
-                    ? 'border-emerald-500/35 bg-emerald-500/10 text-emerald-600 dark:text-emerald-400'
-                    : j.status === 'running'
-                      ? 'border-cyan-500/35 bg-cyan-500/10 text-cyan-600 dark:text-cyan-400'
-                      : 'border-amber-500/35 bg-amber-500/10 text-amber-600 dark:text-amber-400'
+                  j.status === 'failed'
+                    ? 'border-rose-500/35 bg-rose-500/10 text-rose-600 dark:text-rose-400'
+                    : j.status === 'completed' && j.failedCount === 0
+                      ? 'border-emerald-500/35 bg-emerald-500/10 text-emerald-600 dark:text-emerald-400'
+                      : j.status === 'running'
+                        ? 'border-cyan-500/35 bg-cyan-500/10 text-cyan-600 dark:text-cyan-400'
+                        : 'border-amber-500/35 bg-amber-500/10 text-amber-600 dark:text-amber-400'
                 }`}
               >
                 {j.status}
@@ -114,9 +116,15 @@ export const SentCampaignsView: React.FC<SentCampaignsViewProps> = ({ snapshot }
             </div>
 
             {j.status === 'paused' && (
-              <div className="p-2.5 rounded-lg border border-amber-500/30 bg-amber-500/10 font-mono text-[11px] text-amber-700 dark:text-amber-300 leading-snug">
+              <div className="p-2.5 rounded-lg border border-amber-500/30 bg-amber-500/10 font-mono text-[11px] text-amber-700 dark:text-amber-300 leading-snug break-words">
                 {j.pauseReason ||
                   'Reason: Paused manually by you — stays paused until you click Resume.'}
+              </div>
+            )}
+
+            {j.lastSmtpError && (
+              <div className="p-2.5 rounded-lg border border-rose-500/30 bg-rose-500/10 font-mono text-[11px] text-rose-700 dark:text-rose-300 leading-snug break-words">
+                SMTP Error: {j.lastSmtpError}
               </div>
             )}
 
@@ -159,12 +167,17 @@ export const SentCampaignsView: React.FC<SentCampaignsViewProps> = ({ snapshot }
           <tbody className="divide-y divide-slate-100 dark:divide-white/[0.05] font-mono tabular-nums">
             {filtered.map((j) => (
               <tr key={j.id} className="hover:bg-slate-50 dark:hover:bg-white/[0.02]">
-                <td className="py-3 px-4 font-sans font-semibold text-slate-900 dark:text-white max-w-sm">
+                <td className="py-3 px-4 font-sans font-semibold text-slate-900 dark:text-white max-w-md">
                   <div className="truncate">{j.subject}</div>
                   {j.status === 'paused' && (
-                    <div className="mt-1 font-mono font-normal text-[11px] text-amber-600 dark:text-amber-400 whitespace-normal leading-snug">
+                    <div className="mt-1 font-mono font-normal text-[11px] text-amber-600 dark:text-amber-400 whitespace-normal leading-snug break-words">
                       {j.pauseReason ||
                         'Reason: Paused manually by you — stays paused until you click Resume.'}
+                    </div>
+                  )}
+                  {j.lastSmtpError && (
+                    <div className="mt-1 font-mono font-normal text-[11px] text-rose-600 dark:text-rose-400 whitespace-normal leading-snug break-words">
+                      SMTP Error: {j.lastSmtpError}
                     </div>
                   )}
                 </td>
@@ -177,11 +190,13 @@ export const SentCampaignsView: React.FC<SentCampaignsViewProps> = ({ snapshot }
                 <td className="py-3 px-4 uppercase">
                   <span
                     className={
-                      j.status === 'completed'
-                        ? 'text-emerald-600 dark:text-emerald-400'
-                        : j.status === 'running'
-                          ? 'text-cyan-600 dark:text-cyan-400'
-                          : 'text-amber-500'
+                      j.status === 'failed'
+                        ? 'text-rose-600 dark:text-rose-400 font-semibold'
+                        : j.status === 'completed' && j.failedCount === 0
+                          ? 'text-emerald-600 dark:text-emerald-400'
+                          : j.status === 'running'
+                            ? 'text-cyan-600 dark:text-cyan-400'
+                            : 'text-amber-500'
                     }
                   >
                     {j.status}

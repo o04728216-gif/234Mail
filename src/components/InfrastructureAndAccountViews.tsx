@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useRef, useState } from 'react';
 import {
   AlertCircle,
   CheckCircle2,
@@ -75,6 +75,7 @@ export const SmtpSettingsView: React.FC<SmtpSettingsViewProps> = ({
 }) => {
   const pool = snapshot.smtpPool || [];
 
+  const formRef = useRef<HTMLFormElement | null>(null);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [label, setLabel] = useState('');
   const [host, setHost] = useState('');
@@ -117,6 +118,7 @@ export const SmtpSettingsView: React.FC<SmtpSettingsViewProps> = ({
     setImapHost(node.imapHost || '');
     setMakeActive(Boolean(node.isPrimary));
     setStatusMsg(null);
+    formRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
   };
 
   const handleSaveSmtp = async (e: React.FormEvent) => {
@@ -428,188 +430,9 @@ export const SmtpSettingsView: React.FC<SmtpSettingsViewProps> = ({
         </div>
       )}
 
-      {/* Plugged-In SMTP Pool List */}
-      {pool.length > 0 && (
-        <div className="rounded-xl border border-slate-200 dark:border-white/[0.08] bg-white dark:bg-[#0d1119] p-4 sm:p-5 space-y-3.5">
-          <div className="flex flex-wrap items-center justify-between gap-2">
-            <div>
-              <h2 className="text-sm font-display font-bold text-slate-900 dark:text-white">
-                Your Plugged-In SMTP Accounts ({pool.length})
-              </h2>
-              <p className="text-[11px] font-mono text-slate-500 dark:text-slate-400 mt-0.5">
-                Sending goes in order (#1 → #2 → #3 → #4...). If the active SMTP stops, the next Ready one takes over immediately.
-              </p>
-            </div>
-            <div className="flex flex-wrap items-center gap-2">
-              {pool.length > 1 && (
-                <button
-                  type="button"
-                  disabled={checkingAll || Boolean(checkingNodeId)}
-                  onClick={handleCheckAllNodes}
-                  className="px-3 py-1.5 min-h-[38px] rounded-lg border border-cyan-500/35 bg-cyan-500/10 text-cyan-700 dark:text-cyan-300 text-xs font-mono font-semibold hover:bg-cyan-500/20 disabled:opacity-50 inline-flex items-center gap-1.5 cursor-pointer"
-                >
-                  <RefreshCw className={`w-3.5 h-3.5 ${checkingAll ? 'animate-spin' : ''}`} />
-                  <span>{checkingAll ? 'Checking All...' : 'Check All SMTPs'}</span>
-                </button>
-              )}
-              {editingId && (
-                <button
-                  type="button"
-                  onClick={resetFormForNew}
-                  className="px-3 py-1.5 min-h-[38px] rounded-lg bg-cyan-500 text-slate-950 text-xs font-mono font-bold inline-flex items-center gap-1.5 cursor-pointer"
-                >
-                  <Plus className="w-3.5 h-3.5" />
-                  <span>Add New SMTP</span>
-                </button>
-              )}
-            </div>
-          </div>
-
-          <div className="space-y-2.5">
-            {pool.map((node, index) => {
-              const st = node.status || 'ready';
-              const isCheckingThis = checkingNodeId === node.id;
-              const isRowBusy = rowBusyId === node.id || isCheckingThis || checkingAll;
-              const checkInfo = nodeChecks[node.id];
-
-              return (
-                <div
-                  key={node.id}
-                  className={`p-3.5 rounded-xl border transition-colors flex flex-col sm:flex-row sm:items-center justify-between gap-3 ${
-                    node.isPrimary && st === 'ready'
-                      ? 'border-emerald-500/40 bg-emerald-500/[0.05]'
-                      : editingId === node.id
-                        ? 'border-cyan-500/50 bg-cyan-500/[0.06]'
-                        : 'border-slate-200 dark:border-white/10 bg-slate-50/70 dark:bg-[#121722]'
-                  }`}
-                >
-                  <div className="space-y-1.5 min-w-0">
-                    <div className="flex flex-wrap items-center gap-2">
-                      <span className="px-2 py-0.5 rounded bg-slate-200/80 dark:bg-white/10 text-[10px] font-mono font-bold text-slate-700 dark:text-slate-200 tabular-nums">
-                        #{index + 1}
-                      </span>
-                      <span className="text-xs font-display font-bold text-slate-900 dark:text-white break-all">
-                        {node.label || `SMTP #${index + 1}`}
-                      </span>
-                      <span className="text-xs font-mono text-slate-500 dark:text-slate-400 break-all">
-                        {node.host}:{node.port}
-                      </span>
-
-                      {node.isPrimary && st === 'ready' ? (
-                        <span className="px-2 py-0.5 rounded-md bg-emerald-500/15 text-emerald-700 dark:text-emerald-300 text-[10px] font-mono font-bold">
-                          ● Active Now
-                        </span>
-                      ) : st === 'ready' ? (
-                        <span className="px-2 py-0.5 rounded-md bg-cyan-500/15 text-cyan-700 dark:text-cyan-300 text-[10px] font-mono font-semibold">
-                          ● Standby Ready
-                        </span>
-                      ) : st === 'cooling_down' ? (
-                        <span className="px-2 py-0.5 rounded-md bg-amber-500/15 text-amber-700 dark:text-amber-300 text-[10px] font-mono font-semibold">
-                          ● Cooling Down 15m (Switched)
-                        </span>
-                      ) : (
-                        <span className="px-2 py-0.5 rounded-md bg-rose-500/15 text-rose-700 dark:text-rose-300 text-[10px] font-mono font-semibold">
-                          ● Limit / Stopped (Switched)
-                        </span>
-                      )}
-                    </div>
-
-                    <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px] font-mono text-slate-500 dark:text-slate-400">
-                      <span className="break-all">User: {node.username}</span>
-                      <span>·</span>
-                      <span className="tabular-nums">{(node.sentCount || 0).toLocaleString()} sent</span>
-                      {node.statusReason && (
-                        <>
-                          <span>·</span>
-                          <span className="text-amber-600 dark:text-amber-400 break-words">
-                            {node.statusReason}
-                          </span>
-                        </>
-                      )}
-                    </div>
-
-                    {checkInfo && (
-                      <div
-                        className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md border text-[11px] font-mono ${
-                          checkInfo.ok
-                            ? 'border-emerald-500/35 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300'
-                            : 'border-rose-500/35 bg-rose-500/10 text-rose-700 dark:text-rose-300'
-                        }`}
-                      >
-                        {checkInfo.ok ? (
-                          <CheckCircle2 className="w-3.5 h-3.5 shrink-0" />
-                        ) : (
-                          <AlertCircle className="w-3.5 h-3.5 shrink-0" />
-                        )}
-                        <span className="break-words">{checkInfo.text}</span>
-                      </div>
-                    )}
-                  </div>
-
-                  <div className="flex flex-wrap items-center gap-1.5 shrink-0 pt-2 sm:pt-0 border-t sm:border-t-0 border-slate-200/70 dark:border-white/[0.06]">
-                    <button
-                      type="button"
-                      disabled={isRowBusy}
-                      onClick={() => handleCheckNode(node)}
-                      className="px-3 py-1.5 min-h-[38px] rounded-lg border border-emerald-500/35 bg-emerald-500/10 text-[11px] font-mono font-semibold text-emerald-700 dark:text-emerald-300 hover:bg-emerald-500/20 disabled:opacity-50 inline-flex items-center gap-1.5 cursor-pointer"
-                    >
-                      <RefreshCw className={`w-3 h-3 ${isCheckingThis ? 'animate-spin' : ''}`} />
-                      <span>{isCheckingThis ? 'Checking...' : 'Check'}</span>
-                    </button>
-
-                    {st !== 'ready' && (
-                      <button
-                        type="button"
-                        disabled={isRowBusy}
-                        onClick={() => handleResetNodeStatus(node.id)}
-                        className="px-3 py-1.5 min-h-[38px] rounded-lg border border-emerald-500/35 bg-emerald-500/10 text-[11px] font-mono font-semibold text-emerald-700 dark:text-emerald-300 hover:bg-emerald-500/20 inline-flex items-center gap-1 cursor-pointer"
-                      >
-                        <RefreshCw className="w-3 h-3" />
-                        <span>Re-enable</span>
-                      </button>
-                    )}
-
-                    {!node.isPrimary && (
-                      <button
-                        type="button"
-                        disabled={isRowBusy}
-                        onClick={() => handleActivateNode(node.id)}
-                        className="px-3 py-1.5 min-h-[38px] rounded-lg border border-cyan-500/35 bg-cyan-500/10 text-[11px] font-mono font-semibold text-cyan-700 dark:text-cyan-300 hover:bg-cyan-500/20 cursor-pointer"
-                      >
-                        Use Now
-                      </button>
-                    )}
-
-                    <button
-                      type="button"
-                      disabled={isRowBusy}
-                      onClick={() => startEditNode(node)}
-                      className="px-3 py-1.5 min-h-[38px] rounded-lg border border-slate-200 dark:border-white/10 bg-white dark:bg-[#0d1119] text-[11px] font-mono text-slate-700 dark:text-slate-300 hover:border-cyan-500/40 inline-flex items-center gap-1 cursor-pointer"
-                    >
-                      <Edit3 className="w-3 h-3" />
-                      <span>Edit</span>
-                    </button>
-
-                    <button
-                      type="button"
-                      disabled={isRowBusy}
-                      onClick={() => handleDeleteNode(node.id)}
-                      className="px-3 py-1.5 min-h-[38px] rounded-lg border border-rose-500/30 bg-rose-500/[0.07] text-[11px] font-mono text-rose-600 dark:text-rose-400 hover:bg-rose-500/15 inline-flex items-center gap-1 cursor-pointer"
-                      aria-label={`Remove ${node.label}`}
-                    >
-                      <Trash2 className="w-3 h-3" />
-                      <span>Remove</span>
-                    </button>
-                  </div>
-                </div>
-              );
-            })}
-          </div>
-        </div>
-      )}
-
-      {/* Add Another SMTP (or Edit Selected SMTP) Form */}
+      {/* Add SMTP Account (or Edit Selected SMTP) Form — Positioned Above Plugged-In SMTP Accounts */}
       <form
+        ref={formRef}
         onSubmit={handleSaveSmtp}
         className="rounded-xl border border-slate-200 dark:border-white/[0.08] bg-white dark:bg-[#0d1119] p-4 sm:p-6 space-y-5"
       >
@@ -816,6 +639,186 @@ export const SmtpSettingsView: React.FC<SmtpSettingsViewProps> = ({
           </button>
         </div>
       </form>
+
+      {/* Plugged-In SMTP Pool List */}
+      {pool.length > 0 && (
+        <div className="rounded-xl border border-slate-200 dark:border-white/[0.08] bg-white dark:bg-[#0d1119] p-4 sm:p-5 space-y-3.5">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <div>
+              <h2 className="text-sm font-display font-bold text-slate-900 dark:text-white">
+                Your Plugged-In SMTP Accounts ({pool.length})
+              </h2>
+              <p className="text-[11px] font-mono text-slate-500 dark:text-slate-400 mt-0.5">
+                Sending goes in order (#1 → #2 → #3 → #4...). If the active SMTP stops, the next Ready one takes over immediately.
+              </p>
+            </div>
+            <div className="flex flex-wrap items-center gap-2">
+              {pool.length > 1 && (
+                <button
+                  type="button"
+                  disabled={checkingAll || Boolean(checkingNodeId)}
+                  onClick={handleCheckAllNodes}
+                  className="px-3 py-1.5 min-h-[38px] rounded-lg border border-cyan-500/35 bg-cyan-500/10 text-cyan-700 dark:text-cyan-300 text-xs font-mono font-semibold hover:bg-cyan-500/20 disabled:opacity-50 inline-flex items-center gap-1.5 cursor-pointer"
+                >
+                  <RefreshCw className={`w-3.5 h-3.5 ${checkingAll ? 'animate-spin' : ''}`} />
+                  <span>{checkingAll ? 'Checking All...' : 'Check All SMTPs'}</span>
+                </button>
+              )}
+              {editingId && (
+                <button
+                  type="button"
+                  onClick={resetFormForNew}
+                  className="px-3 py-1.5 min-h-[38px] rounded-lg bg-cyan-500 text-slate-950 text-xs font-mono font-bold inline-flex items-center gap-1.5 cursor-pointer"
+                >
+                  <Plus className="w-3.5 h-3.5" />
+                  <span>Add New SMTP</span>
+                </button>
+              )}
+            </div>
+          </div>
+
+          <div className="space-y-2.5">
+            {pool.map((node, index) => {
+              const st = node.status || 'ready';
+              const isCheckingThis = checkingNodeId === node.id;
+              const isRowBusy = rowBusyId === node.id || isCheckingThis || checkingAll;
+              const checkInfo = nodeChecks[node.id];
+
+              return (
+                <div
+                  key={node.id}
+                  className={`p-3.5 rounded-xl border transition-colors flex flex-col sm:flex-row sm:items-center justify-between gap-3 ${
+                    node.isPrimary && st === 'ready'
+                      ? 'border-emerald-500/40 bg-emerald-500/[0.05]'
+                      : editingId === node.id
+                        ? 'border-cyan-500/50 bg-cyan-500/[0.06]'
+                        : 'border-slate-200 dark:border-white/10 bg-slate-50/70 dark:bg-[#121722]'
+                  }`}
+                >
+                  <div className="space-y-1.5 min-w-0">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <span className="px-2 py-0.5 rounded bg-slate-200/80 dark:bg-white/10 text-[10px] font-mono font-bold text-slate-700 dark:text-slate-200 tabular-nums">
+                        #{index + 1}
+                      </span>
+                      <span className="text-xs font-display font-bold text-slate-900 dark:text-white break-all">
+                        {node.label || `SMTP #${index + 1}`}
+                      </span>
+                      <span className="text-xs font-mono text-slate-500 dark:text-slate-400 break-all">
+                        {node.host}:{node.port}
+                      </span>
+
+                      {node.isPrimary && st === 'ready' ? (
+                        <span className="px-2 py-0.5 rounded-md bg-emerald-500/15 text-emerald-700 dark:text-emerald-300 text-[10px] font-mono font-bold">
+                          ● Active Now
+                        </span>
+                      ) : st === 'ready' ? (
+                        <span className="px-2 py-0.5 rounded-md bg-cyan-500/15 text-cyan-700 dark:text-cyan-300 text-[10px] font-mono font-semibold">
+                          ● Standby Ready
+                        </span>
+                      ) : st === 'cooling_down' ? (
+                        <span className="px-2 py-0.5 rounded-md bg-amber-500/15 text-amber-700 dark:text-amber-300 text-[10px] font-mono font-semibold">
+                          ● Cooling Down 15m (Switched)
+                        </span>
+                      ) : (
+                        <span className="px-2 py-0.5 rounded-md bg-rose-500/15 text-rose-700 dark:text-rose-300 text-[10px] font-mono font-semibold">
+                          ● Limit / Stopped (Switched)
+                        </span>
+                      )}
+                    </div>
+
+                    <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px] font-mono text-slate-500 dark:text-slate-400">
+                      <span className="break-all">User: {node.username}</span>
+                      <span>·</span>
+                      <span className="tabular-nums">{(node.sentCount || 0).toLocaleString()} sent</span>
+                      {node.statusReason && (
+                        <>
+                          <span>·</span>
+                          <span className="text-amber-600 dark:text-amber-400 break-words">
+                            {node.statusReason}
+                          </span>
+                        </>
+                      )}
+                    </div>
+
+                    {checkInfo && (
+                      <div
+                        className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md border text-[11px] font-mono ${
+                          checkInfo.ok
+                            ? 'border-emerald-500/35 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300'
+                            : 'border-rose-500/35 bg-rose-500/10 text-rose-700 dark:text-rose-300'
+                        }`}
+                      >
+                        {checkInfo.ok ? (
+                          <CheckCircle2 className="w-3.5 h-3.5 shrink-0" />
+                        ) : (
+                          <AlertCircle className="w-3.5 h-3.5 shrink-0" />
+                        )}
+                        <span className="break-words">{checkInfo.text}</span>
+                      </div>
+                    )}
+                  </div>
+
+                  <div className="flex flex-wrap items-center gap-1.5 shrink-0 pt-2 sm:pt-0 border-t sm:border-t-0 border-slate-200/70 dark:border-white/[0.06]">
+                    <button
+                      type="button"
+                      disabled={isRowBusy}
+                      onClick={() => handleCheckNode(node)}
+                      className="px-3 py-1.5 min-h-[38px] rounded-lg border border-emerald-500/35 bg-emerald-500/10 text-[11px] font-mono font-semibold text-emerald-700 dark:text-emerald-300 hover:bg-emerald-500/20 disabled:opacity-50 inline-flex items-center gap-1.5 cursor-pointer"
+                    >
+                      <RefreshCw className={`w-3 h-3 ${isCheckingThis ? 'animate-spin' : ''}`} />
+                      <span>{isCheckingThis ? 'Checking...' : 'Check'}</span>
+                    </button>
+
+                    {st !== 'ready' && (
+                      <button
+                        type="button"
+                        disabled={isRowBusy}
+                        onClick={() => handleResetNodeStatus(node.id)}
+                        className="px-3 py-1.5 min-h-[38px] rounded-lg border border-emerald-500/35 bg-emerald-500/10 text-[11px] font-mono font-semibold text-emerald-700 dark:text-emerald-300 hover:bg-emerald-500/20 inline-flex items-center gap-1 cursor-pointer"
+                      >
+                        <RefreshCw className="w-3 h-3" />
+                        <span>Re-enable</span>
+                      </button>
+                    )}
+
+                    {!node.isPrimary && (
+                      <button
+                        type="button"
+                        disabled={isRowBusy}
+                        onClick={() => handleActivateNode(node.id)}
+                        className="px-3 py-1.5 min-h-[38px] rounded-lg border border-cyan-500/35 bg-cyan-500/10 text-[11px] font-mono font-semibold text-cyan-700 dark:text-cyan-300 hover:bg-cyan-500/20 cursor-pointer"
+                      >
+                        Use Now
+                      </button>
+                    )}
+
+                    <button
+                      type="button"
+                      disabled={isRowBusy}
+                      onClick={() => startEditNode(node)}
+                      className="px-3 py-1.5 min-h-[38px] rounded-lg border border-slate-200 dark:border-white/10 bg-white dark:bg-[#0d1119] text-[11px] font-mono text-slate-700 dark:text-slate-300 hover:border-cyan-500/40 inline-flex items-center gap-1 cursor-pointer"
+                    >
+                      <Edit3 className="w-3 h-3" />
+                      <span>Edit</span>
+                    </button>
+
+                    <button
+                      type="button"
+                      disabled={isRowBusy}
+                      onClick={() => handleDeleteNode(node.id)}
+                      className="px-3 py-1.5 min-h-[38px] rounded-lg border border-rose-500/30 bg-rose-500/[0.07] text-[11px] font-mono text-rose-600 dark:text-rose-400 hover:bg-rose-500/15 inline-flex items-center gap-1 cursor-pointer"
+                      aria-label={`Remove ${node.label}`}
+                    >
+                      <Trash2 className="w-3 h-3" />
+                      <span>Remove</span>
+                    </button>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
     </div>
   );
 };

@@ -1,5 +1,6 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import {
+  AlertTriangle,
   AlignLeft,
   BarChart2,
   Bold,
@@ -23,8 +24,10 @@ import {
   PenSquare,
   Play,
   RemoveFormatting,
+  RotateCcw,
   Save,
   Send,
+  Settings,
   Smartphone,
   Sparkles,
   Square,
@@ -33,6 +36,7 @@ import {
   Upload,
   User,
   Users,
+  X,
   Zap,
 } from 'lucide-react';
 import { t } from '../i18n';
@@ -718,11 +722,13 @@ interface ComposeEmailViewProps {
   token: string;
   snapshot: DashboardSnapshot;
   lang: LanguageCode;
+  isActive?: boolean;
   initialDraft: DraftItem | null;
   onClearInitialDraft: () => void;
   onJobCreated: (job: QueueJob) => void;
   onDraftsUpdated: (drafts: DraftItem[]) => void;
   onNavigateQueue: () => void;
+  onNavigateSmtp?: () => void;
   onNavigateSubscription?: () => void;
 }
 
@@ -730,11 +736,13 @@ export const ComposeEmailView: React.FC<ComposeEmailViewProps> = ({
   token,
   snapshot,
   lang,
+  isActive = true,
   initialDraft,
   onClearInitialDraft,
   onJobCreated,
   onDraftsUpdated,
   onNavigateQueue,
+  onNavigateSmtp,
   onNavigateSubscription,
 }) => {
   const userOpts = snapshot.user.options;
@@ -903,6 +911,34 @@ export const ComposeEmailView: React.FC<ComposeEmailViewProps> = ({
 
   const [submitting, setSubmitting] = useState(false);
   const [feedback, setFeedback] = useState<{ type: 'ok' | 'err'; text: string } | null>(null);
+  const [lastDispatchedJobId, setLastDispatchedJobId] = useState<string | null>(null);
+
+  // Never let "Sending X email(s) now!" or "Queued at X emails/hour!" stay stuck after leaving Compose or finishing the task
+  useEffect(() => {
+    if (!feedback || feedback.type !== 'ok') return;
+    if (!isActive) {
+      setFeedback(null);
+      return;
+    }
+    const timer = window.setTimeout(() => {
+      setFeedback((prev) => (prev?.type === 'ok' ? null : prev));
+    }, 3500);
+    return () => window.clearTimeout(timer);
+  }, [feedback, isActive]);
+
+  useEffect(() => {
+    if (!lastDispatchedJobId || feedback?.type !== 'ok') return;
+    const matchingJob = snapshot.jobs.find((j) => j.id === lastDispatchedJobId);
+    if (
+      matchingJob &&
+      (matchingJob.status === 'completed' ||
+        matchingJob.status === 'failed' ||
+        matchingJob.status === 'paused' ||
+        matchingJob.status === 'stopped')
+    ) {
+      setFeedback(null);
+    }
+  }, [lastDispatchedJobId, snapshot.jobs, feedback]);
 
   const parsedNames = useMemo(
     () =>
@@ -1104,6 +1140,7 @@ export const ComposeEmailView: React.FC<ComposeEmailViewProps> = ({
       );
 
       onJobCreated(res.job);
+      setLastDispatchedJobId(res.job.id);
       setFeedback({
         type: 'ok',
         text:
@@ -1113,9 +1150,10 @@ export const ComposeEmailView: React.FC<ComposeEmailViewProps> = ({
               ? `Sending ${res.job.totalRecipients.toLocaleString()} email(s) now!`
               : `Queued at ${res.job.hourlyRateLimit} emails/hour!`,
       });
-      setTimeout(() => {
+      window.setTimeout(() => {
+        setFeedback((prev) => (prev?.type === 'ok' ? null : prev));
         onNavigateQueue();
-      }, 600);
+      }, 650);
     } catch (err) {
       setFeedback({ type: 'err', text: err instanceof Error ? err.message : 'Could not send emails' });
     } finally {
@@ -1191,16 +1229,37 @@ export const ComposeEmailView: React.FC<ComposeEmailViewProps> = ({
               : 'border-rose-500/30 bg-rose-500/10 text-rose-700 dark:text-rose-300'
           }`}
         >
-          <span>{feedback.text}</span>
-          {!isPaidAndActive && feedback.type === 'err' && onNavigateSubscription && (
+          <span className="leading-relaxed">{feedback.text}</span>
+          <div className="flex items-center gap-2 shrink-0 self-end sm:self-auto">
+            {!isPaidAndActive && feedback.type === 'err' && onNavigateSubscription && (
+              <button
+                type="button"
+                onClick={onNavigateSubscription}
+                className="min-h-[34px] px-3.5 py-1.5 rounded-lg bg-cyan-500 text-slate-950 font-bold whitespace-nowrap hover:opacity-95 cursor-pointer"
+              >
+                Activate Paid Plan →
+              </button>
+            )}
+            {feedback.type === 'err' &&
+              feedback.text.toLowerCase().includes('smtp') &&
+              onNavigateSmtp && (
+                <button
+                  type="button"
+                  onClick={onNavigateSmtp}
+                  className="min-h-[34px] px-3.5 py-1.5 rounded-lg bg-rose-500 text-white font-bold whitespace-nowrap hover:opacity-95 cursor-pointer"
+                >
+                  Open SMTP Settings →
+                </button>
+              )}
             <button
               type="button"
-              onClick={onNavigateSubscription}
-              className="w-full sm:w-auto min-h-[36px] px-3.5 py-1.5 rounded-lg bg-cyan-500 text-slate-950 font-bold whitespace-nowrap shrink-0 hover:opacity-95 cursor-pointer"
+              aria-label="Dismiss notification"
+              onClick={() => setFeedback(null)}
+              className="p-1.5 rounded-lg hover:bg-black/10 dark:hover:bg-white/10 transition-colors cursor-pointer"
             >
-              Activate Paid Plan →
+              <X className="w-3.5 h-3.5" />
             </button>
-          )}
+          </div>
         </div>
       )}
 
@@ -2237,6 +2296,7 @@ const QUEUE_PAGE_SIZE = 50;
 interface QueueMonitorViewProps {
   token: string;
   snapshot: DashboardSnapshot;
+  onNavigateSmtp?: () => void;
   onJobUpdated: (job: QueueJob) => void;
   onJobCreated: (job: QueueJob) => void;
 }
@@ -2244,6 +2304,7 @@ interface QueueMonitorViewProps {
 export const QueueMonitorView: React.FC<QueueMonitorViewProps> = ({
   token,
   snapshot,
+  onNavigateSmtp,
   onJobUpdated,
 }) => {
   const [currentPage, setCurrentPage] = useState(1);
@@ -2363,11 +2424,31 @@ export const QueueMonitorView: React.FC<QueueMonitorViewProps> = ({
             job.totalRecipients > 0
               ? Math.min(100, Math.round((job.processedCount / job.totalRecipients) * 100))
               : 0;
+          const jobErrors = snapshot.errors.filter((e) => e.jobId === job.id);
+          const hasSmtpOrDeliveryError =
+            Boolean(job.lastSmtpError) ||
+            job.failedCount > 0 ||
+            jobErrors.length > 0 ||
+            job.status === 'failed';
+          const isFinishedState =
+            job.status === 'completed' || job.status === 'failed' || job.status === 'stopped';
+
+          const primaryErrorReason =
+            job.lastSmtpError ||
+            (jobErrors[0]
+              ? `${jobErrors[0].smtpCode ? `${jobErrors[0].smtpCode}: ` : ''}${jobErrors[0].errorMessage}`
+              : job.pauseReason || 'SMTP server rejected one or more emails.');
 
           return (
             <div
               key={job.id}
-              className="rounded-xl border border-slate-200 dark:border-white/[0.08] bg-white dark:bg-[#0d1119] p-4 sm:p-5 space-y-4"
+              className={`rounded-xl border bg-white dark:bg-[#0d1119] p-4 sm:p-5 space-y-4 ${
+                job.status === 'failed' || job.limitType === 'smtp_error'
+                  ? 'border-rose-500/35 dark:border-rose-500/30'
+                  : hasSmtpOrDeliveryError
+                    ? 'border-amber-500/35 dark:border-amber-500/25'
+                    : 'border-slate-200 dark:border-white/[0.08]'
+              }`}
             >
               <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-3">
                 <div className="min-w-0">
@@ -2376,8 +2457,24 @@ export const QueueMonitorView: React.FC<QueueMonitorViewProps> = ({
                       #{rowNumber}
                     </span>
                     <span aria-hidden="true">·</span>
-                    <span className="capitalize font-semibold text-cyan-600 dark:text-cyan-400">
-                      {job.status}
+                    <span
+                      className={`font-semibold ${
+                        job.status === 'failed' || job.limitType === 'smtp_error'
+                          ? 'text-rose-600 dark:text-rose-400'
+                          : job.status === 'paused' || (job.status === 'completed' && job.failedCount > 0)
+                            ? 'text-amber-600 dark:text-amber-400'
+                            : job.status === 'completed'
+                              ? 'text-emerald-600 dark:text-emerald-400'
+                              : 'text-cyan-600 dark:text-cyan-400'
+                      }`}
+                    >
+                      {job.status === 'failed'
+                        ? 'Failed · Check SMTP Error'
+                        : job.status === 'completed' && job.failedCount > 0
+                          ? `Completed (${job.failedCount} Failed)`
+                          : job.status === 'running'
+                            ? 'Sending'
+                            : job.status.charAt(0).toUpperCase() + job.status.slice(1)}
                     </span>
                     <span aria-hidden="true">·</span>
                     <span className="break-all sm:break-normal">From: {job.fromEmail}</span>
@@ -2462,6 +2559,17 @@ export const QueueMonitorView: React.FC<QueueMonitorViewProps> = ({
                     </button>
                   )}
 
+                  {job.status === 'failed' && (
+                    <button
+                      type="button"
+                      onClick={() => controlJob(job.id, { action: 'resume' })}
+                      className="min-h-[38px] px-3.5 py-1.5 rounded-lg border border-cyan-500/40 text-cyan-600 dark:text-cyan-400 text-xs font-medium inline-flex items-center gap-1 cursor-pointer"
+                    >
+                      <RotateCcw className="w-3.5 h-3.5" />
+                      <span>Retry All</span>
+                    </button>
+                  )}
+
                   {(job.status === 'running' || job.status === 'paused' || job.status === 'scheduled') && (
                     <button
                       type="button"
@@ -2485,37 +2593,48 @@ export const QueueMonitorView: React.FC<QueueMonitorViewProps> = ({
                         : 'border-cyan-500/35 bg-cyan-500/10 text-cyan-800 dark:text-cyan-200'
                   }`}
                 >
-                  <div className="flex flex-wrap items-center gap-2">
-                    <span
-                      className={`px-2 py-0.5 rounded text-[10px] font-bold uppercase tracking-wide border ${
-                        job.limitType === 'max_quota'
-                          ? 'border-rose-500/40 bg-rose-500/15'
-                          : job.limitType === 'smtp_error'
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <span
+                        className={`px-2 py-0.5 rounded text-[10px] font-bold uppercase tracking-wide border ${
+                          job.limitType === 'max_quota' || job.limitType === 'smtp_error'
                             ? 'border-rose-500/40 bg-rose-500/15'
                             : job.limitType === 'deferred'
                               ? 'border-amber-500/40 bg-amber-500/15'
                               : 'border-cyan-500/40 bg-cyan-500/15'
-                      }`}
-                    >
-                      {job.limitType === 'max_quota'
-                        ? 'Paused · Daily / Max Quota'
-                        : job.limitType === 'smtp_error'
-                          ? 'Paused · SMTP Login / Connection Error'
-                          : job.limitType === 'deferred'
-                            ? 'Paused · Auto-Resumes After Cooldown'
-                            : 'Paused · Manual Pause'}
-                    </span>
-                    {job.autoResumeAt ? (
-                      <span className="text-[11px] opacity-90">
-                        Auto-resumes at {formatScheduledDateTime(job.autoResumeAt)}
+                        }`}
+                      >
+                        {job.limitType === 'max_quota'
+                          ? 'Paused · Daily / Max Quota'
+                          : job.limitType === 'smtp_error'
+                            ? 'Paused · SMTP Error'
+                            : job.limitType === 'deferred'
+                              ? 'Paused · Auto-Resumes After Cooldown'
+                              : 'Paused · Manual Pause'}
                       </span>
-                    ) : (
-                      <span className="text-[11px] opacity-90">
-                        Waiting for you to click Resume
-                      </span>
-                    )}
+                      {job.autoResumeAt ? (
+                        <span className="text-[11px] opacity-90">
+                          Auto-resumes at {formatScheduledDateTime(job.autoResumeAt)}
+                        </span>
+                      ) : (
+                        <span className="text-[11px] opacity-90">
+                          Waiting for you to click Resume
+                        </span>
+                      )}
+                    </div>
+                    {(job.limitType === 'smtp_error' || job.limitType === 'max_quota') &&
+                      onNavigateSmtp && (
+                        <button
+                          type="button"
+                          onClick={onNavigateSmtp}
+                          className="min-h-[30px] px-2.5 py-1 rounded-lg border border-rose-500/40 bg-rose-500/15 hover:bg-rose-500/25 text-[11px] font-semibold inline-flex items-center gap-1 cursor-pointer"
+                        >
+                          <Settings className="w-3 h-3" />
+                          <span>Check SMTP Settings →</span>
+                        </button>
+                      )}
                   </div>
-                  <div className="font-semibold leading-relaxed">
+                  <div className="font-semibold leading-relaxed break-words">
                     {job.pauseReason ||
                       'Reason: Paused manually by you — stays paused until you click Resume.'}
                   </div>
@@ -2525,24 +2644,112 @@ export const QueueMonitorView: React.FC<QueueMonitorViewProps> = ({
                 </div>
               )}
 
+              {/* Persistent SMTP / Delivery Error Report — stays visible EVEN AFTER queue progress reaches 100% */}
+              {hasSmtpOrDeliveryError && (
+                <div className="px-3.5 py-3 rounded-xl border border-rose-500/35 bg-rose-500/[0.08] text-rose-700 dark:text-rose-300 text-xs font-mono space-y-2">
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <span className="px-2 py-0.5 rounded text-[10px] font-bold uppercase tracking-wide border border-rose-500/40 bg-rose-500/15 inline-flex items-center gap-1">
+                        <AlertTriangle className="w-3 h-3 shrink-0" />
+                        <span>SMTP / Delivery Error</span>
+                      </span>
+                      {job.failedCount > 0 && (
+                        <span className="text-[11px] font-semibold">
+                          {job.failedCount.toLocaleString()} failed of{' '}
+                          {job.totalRecipients.toLocaleString()}
+                        </span>
+                      )}
+                      {(job.lastSmtpErrorAt || jobErrors[0]?.timestamp) && (
+                        <span className="text-[11px] opacity-80">
+                          · {job.lastSmtpErrorAt || jobErrors[0]?.timestamp}
+                        </span>
+                      )}
+                      {isFinishedState && (
+                        <span className="text-[11px] opacity-85">
+                          · Saved on record after completion
+                        </span>
+                      )}
+                    </div>
+
+                    {onNavigateSmtp && (
+                      <button
+                        type="button"
+                        onClick={onNavigateSmtp}
+                        className="min-h-[30px] px-2.5 py-1 rounded-lg border border-rose-500/40 bg-rose-500/15 hover:bg-rose-500/25 text-[11px] font-semibold inline-flex items-center gap-1 cursor-pointer"
+                      >
+                        <Settings className="w-3 h-3" />
+                        <span>SMTP Settings →</span>
+                      </button>
+                    )}
+                  </div>
+
+                  <div className="font-semibold leading-relaxed break-words">
+                    Why it happened: {primaryErrorReason}
+                  </div>
+
+                  {jobErrors.length > 0 && (
+                    <div className="pt-1.5 border-t border-rose-500/20 space-y-1">
+                      <div className="text-[10px] uppercase tracking-wider opacity-80 font-semibold">
+                        Recent SMTP Server Responses ({jobErrors.length.toLocaleString()}):
+                      </div>
+                      {jobErrors.slice(0, 5).map((errItem) => (
+                        <div
+                          key={errItem.id}
+                          className="text-[11px] leading-snug break-words opacity-95"
+                        >
+                          <span className="font-bold">{errItem.recipientEmail}</span> —{' '}
+                          {errItem.smtpCode ? `[${errItem.smtpCode}] ` : ''}
+                          {errItem.errorMessage}
+                        </div>
+                      ))}
+                      {jobErrors.length > 5 && (
+                        <div className="text-[11px] opacity-75">
+                          + {(jobErrors.length - 5).toLocaleString()} more error response(s) logged
+                        </div>
+                      )}
+                    </div>
+                  )}
+                </div>
+              )}
+
               <div>
                 <div className="flex flex-wrap items-center justify-between gap-1 text-xs font-mono tabular-nums text-slate-600 dark:text-slate-400 mb-1.5">
                   <span>
-                    {job.sentCount.toLocaleString()} of {job.totalRecipients.toLocaleString()} sent
-                    {job.failedCount > 0 ? ` · ${job.failedCount.toLocaleString()} bounced` : ''} ({pct}%)
+                    {job.sentCount.toLocaleString()} of {job.totalRecipients.toLocaleString()} delivered
+                    {job.failedCount > 0 ? ` · ${job.failedCount.toLocaleString()} failed` : ''} ({pct}%)
                   </span>
-                  <span>
+                  <span
+                    className={
+                      job.status === 'failed'
+                        ? 'font-semibold text-rose-600 dark:text-rose-400'
+                        : job.status === 'completed' && job.failedCount > 0
+                          ? 'font-semibold text-amber-600 dark:text-amber-400'
+                          : job.status === 'completed'
+                            ? 'font-semibold text-emerald-600 dark:text-emerald-400'
+                            : ''
+                    }
+                  >
                     {job.currentThroughputPerSec > 0
                       ? `${job.currentThroughputPerSec.toLocaleString()} emails/sec`
-                      : job.status === 'completed'
-                        ? 'Finished'
-                        : ''}
+                      : job.status === 'failed'
+                        ? `Failed (${job.failedCount} rejected)`
+                        : job.status === 'completed' && job.failedCount > 0
+                          ? `Finished (${job.failedCount} failed)`
+                          : job.status === 'completed'
+                            ? 'Finished'
+                            : ''}
                   </span>
                 </div>
                 <progress
                   value={pct}
                   max={100}
-                  className="block h-2.5 w-full rounded-full overflow-hidden appearance-none [&::-webkit-progress-bar]:bg-slate-100 dark:[&::-webkit-progress-bar]:bg-white/[0.07] [&::-webkit-progress-value]:bg-gradient-to-r [&::-webkit-progress-value]:from-cyan-400 [&::-webkit-progress-value]:to-indigo-500 [&::-webkit-progress-value]:transition-all [&::-moz-progress-bar]:bg-cyan-400 bg-slate-100 dark:bg-white/[0.07]"
+                  className={`block h-2.5 w-full rounded-full overflow-hidden appearance-none [&::-webkit-progress-bar]:bg-slate-100 dark:[&::-webkit-progress-bar]:bg-white/[0.07] [&::-webkit-progress-value]:transition-all bg-slate-100 dark:bg-white/[0.07] ${
+                    job.status === 'failed'
+                      ? '[&::-webkit-progress-value]:bg-rose-500 [&::-moz-progress-bar]:bg-rose-500'
+                      : job.failedCount > 0 && job.status === 'completed'
+                        ? '[&::-webkit-progress-value]:bg-amber-500 [&::-moz-progress-bar]:bg-amber-500'
+                        : '[&::-webkit-progress-value]:bg-gradient-to-r [&::-webkit-progress-value]:from-cyan-400 [&::-webkit-progress-value]:to-indigo-500 [&::-moz-progress-bar]:bg-cyan-400'
+                  }`}
                 />
               </div>
             </div>
