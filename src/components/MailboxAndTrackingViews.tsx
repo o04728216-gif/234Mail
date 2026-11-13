@@ -903,12 +903,12 @@ export const InboxView: React.FC<InboxViewProps> = ({
           )}
         </div>
       ) : (
-        <div className="grid grid-cols-1 lg:grid-cols-12 gap-5">
+        <div className="grid grid-cols-1 lg:grid-cols-12 gap-5 xl:gap-6 items-start">
           {/* Master Message List (Full-width on mobile until a message is tapped; left pane on lg+) */}
           <div
             className={`${
               mobileReaderOpen ? 'hidden lg:block' : 'block'
-            } lg:col-span-5 rounded-xl border border-slate-200 dark:border-white/[0.08] bg-white dark:bg-[#0d1119] divide-y divide-slate-100 dark:divide-white/[0.06] max-h-[68dvh] lg:max-h-[640px] overflow-y-auto`}
+            } lg:col-span-4 rounded-xl border border-slate-200 dark:border-white/[0.08] bg-white dark:bg-[#0d1119] divide-y divide-slate-100 dark:divide-white/[0.06] max-h-[68dvh] lg:max-h-[calc(100dvh-210px)] overflow-y-auto`}
           >
             {snapshot.inbox.map((msg) => (
               <button
@@ -939,11 +939,11 @@ export const InboxView: React.FC<InboxViewProps> = ({
             ))}
           </div>
 
-          {/* Message Detail Reader (Opens full-screen card on mobile when tapped; right pane on lg+) */}
+          {/* Message Detail Reader (Opens full-screen card on mobile when tapped; wide right pane on lg+) */}
           <div
             className={`${
               mobileReaderOpen ? 'block' : 'hidden lg:block'
-            } lg:col-span-7 rounded-xl border border-slate-200 dark:border-white/[0.08] bg-white dark:bg-[#0d1119] p-4 sm:p-6`}
+            } lg:col-span-8 rounded-xl border border-slate-200 dark:border-white/[0.08] bg-white dark:bg-[#0d1119] p-4 sm:p-6 xl:p-8`}
           >
             {selectedMsg ? (
               <div className="space-y-4">
@@ -1175,7 +1175,7 @@ export const DraftsView: React.FC<DraftsViewProps> = ({
           No saved drafts yet.
         </div>
       ) : (
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+        <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4 xl:gap-5">
           {snapshot.drafts.map((d) => (
             <div
               key={d.id}

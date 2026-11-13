@@ -1,0 +1,30 @@
+{
+  "$schema": "https://schema.railpack.com",
+  "packages": {
+    "node": "22",
+    "bun": "latest"
+  },
+  "steps": {
+    "install": {
+      "commands": [
+        {
+          "path": "/app/node_modules/.bin"
+        },
+        {
+          "src": "package.json",
+          "dest": "package.json"
+        },
+        {
+          "cmd": "BUN_INSTALL_GLOBAL_STORE=0 bun install --no-frozen-lockfile",
+          "customName": "bun install"
+        }
+      ]
+    }
+  },
+  "deploy": {
+    "startCommand": "node server.ts",
+    "variables": {
+      "NODE_ENV": "production"
+    }
+  }
+}

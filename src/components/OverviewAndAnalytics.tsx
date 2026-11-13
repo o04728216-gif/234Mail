@@ -66,8 +66,8 @@ export const OverviewView: React.FC<OverviewViewProps> = ({ snapshot, lang, onNa
         </p>
       </div>
 
-      {/* 4 Simple Cards (2x2 compact grid on mobile phones, 4-col on desktop) */}
-      <div className="grid grid-cols-2 xl:grid-cols-4 gap-3 sm:gap-4">
+      {/* 4 Simple Cards (2x2 compact grid on mobile phones, 4-col row on desktop/PC) */}
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-3.5 sm:gap-4 xl:gap-5">
         <div className="rounded-xl border border-slate-200 dark:border-white/[0.08] bg-white dark:bg-[#0d1119] p-4 sm:p-5">
           <div className="text-[11px] sm:text-xs font-mono text-slate-500 dark:text-slate-400">
             {t(lang, 'statusActive')}

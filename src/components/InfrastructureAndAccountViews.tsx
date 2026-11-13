@@ -382,7 +382,7 @@ export const SmtpSettingsView: React.FC<SmtpSettingsViewProps> = ({
   const readyCount = pool.filter((n) => !n.status || n.status === 'ready').length;
 
   return (
-    <div className="max-w-3xl space-y-6">
+    <div className="w-full max-w-5xl xl:max-w-6xl mx-auto space-y-6">
       <div>
         <div className="flex items-center gap-2.5">
           <Settings className="w-6 h-6 text-cyan-500" />
@@ -898,9 +898,9 @@ export const AccountAndSubscriptionView: React.FC<AccountAndSubscriptionProps> =
           : 'Subscription Expired — Renewal Required';
 
     return (
-      <div className="max-w-xl mx-auto space-y-5 sm:space-y-6">
+      <div className="w-full max-w-4xl mx-auto space-y-5 sm:space-y-6">
         <div
-          className={`rounded-xl border px-4 sm:px-5 py-3.5 sm:py-4 flex flex-col sm:flex-row sm:items-center justify-between gap-2.5 sm:gap-4 ${
+          className={`rounded-xl border px-4 sm:px-6 py-3.5 sm:py-4 flex flex-col sm:flex-row sm:items-center justify-between gap-2.5 sm:gap-4 ${
             isPaidActive
               ? 'border-cyan-500/25 bg-cyan-500/[0.05]'
               : isFreeTrial
@@ -962,86 +962,92 @@ export const AccountAndSubscriptionView: React.FC<AccountAndSubscriptionProps> =
           </p>
         </div>
 
-        <div className="rounded-2xl border border-slate-200 dark:border-white/[0.09] bg-white dark:bg-[#0d1119] p-4 sm:p-8 space-y-5 sm:space-y-6">
-          <div className="text-xs font-mono text-slate-500 dark:text-slate-400">Payment Details</div>
+        <div className="rounded-2xl border border-slate-200 dark:border-white/[0.09] bg-white dark:bg-[#0d1119] p-5 sm:p-8 grid grid-cols-1 lg:grid-cols-12 gap-6 lg:gap-8 items-start">
+          {/* Left Desktop Column: Plan Amount & Wallet Address */}
+          <div className="lg:col-span-5 space-y-4">
+            <div className="text-xs font-mono text-slate-500 dark:text-slate-400">Payment Details</div>
 
-          <div className="flex flex-wrap items-baseline gap-2.5 sm:gap-3">
-            <span className="text-3xl sm:text-5xl font-extrabold font-display text-cyan-500 dark:text-cyan-400 tabular-nums">
-              ${monthlyPrice}
-            </span>
-            <span className="text-xs font-mono text-slate-500 dark:text-slate-400">
-              = {durationDays} Days Paid &amp; Active Access
-            </span>
-          </div>
-
-          <div className="text-xs font-mono text-emerald-600 dark:text-emerald-400">
-            {networkLabel}
-          </div>
-
-          <div>
-            <div className="text-xs font-mono text-slate-500 dark:text-slate-400 mb-2">
-              Send to this wallet:
+            <div className="flex flex-wrap items-baseline gap-2.5 sm:gap-3">
+              <span className="text-3xl sm:text-5xl font-extrabold font-display text-cyan-500 dark:text-cyan-400 tabular-nums">
+                ${monthlyPrice}
+              </span>
+              <span className="text-xs font-mono text-slate-500 dark:text-slate-400">
+                = {durationDays} Days Paid &amp; Active Access
+              </span>
             </div>
-            <div className="p-3 rounded-xl border border-slate-200 dark:border-white/10 bg-slate-50 dark:bg-[#121722] flex flex-col sm:flex-row sm:items-center justify-between gap-2.5 sm:gap-3">
-              <code className="text-xs font-mono text-cyan-700 dark:text-cyan-300 break-all">
-                {walletAddress}
-              </code>
-              <button
-                type="button"
-                onClick={() => {
-                  navigator.clipboard.writeText(walletAddress);
-                  setCopiedWallet(true);
-                  setTimeout(() => setCopiedWallet(false), 2000);
-                }}
-                className="w-full sm:w-auto min-h-[38px] px-3.5 py-1.5 rounded-lg border border-cyan-500/30 bg-cyan-500/10 text-xs font-mono font-semibold text-cyan-700 dark:text-cyan-300 hover:bg-cyan-500/20 shrink-0 cursor-pointer"
+
+            <div className="text-xs font-mono text-emerald-600 dark:text-emerald-400">
+              {networkLabel}
+            </div>
+
+            <div className="pt-2">
+              <div className="text-xs font-mono text-slate-500 dark:text-slate-400 mb-2">
+                Send to this wallet:
+              </div>
+              <div className="p-3.5 rounded-xl border border-slate-200 dark:border-white/10 bg-slate-50 dark:bg-[#121722] space-y-3">
+                <code className="block text-xs font-mono text-cyan-700 dark:text-cyan-300 break-all">
+                  {walletAddress}
+                </code>
+                <button
+                  type="button"
+                  onClick={() => {
+                    navigator.clipboard.writeText(walletAddress);
+                    setCopiedWallet(true);
+                    setTimeout(() => setCopiedWallet(false), 2000);
+                  }}
+                  className="w-full min-h-[38px] px-3.5 py-2 rounded-lg border border-cyan-500/30 bg-cyan-500/10 text-xs font-mono font-semibold text-cyan-700 dark:text-cyan-300 hover:bg-cyan-500/20 cursor-pointer"
+                >
+                  {copiedWallet ? 'Copied!' : 'Copy Wallet Address'}
+                </button>
+              </div>
+            </div>
+          </div>
+
+          {/* Right Desktop Column: Simple Steps & Verify Payment */}
+          <div className="lg:col-span-7 space-y-5 lg:border-l lg:border-slate-200 lg:dark:border-white/[0.07] lg:pl-8">
+            <ol className="space-y-2.5 text-xs font-mono text-slate-600 dark:text-slate-300 leading-relaxed">
+              <li>1. Open your crypto wallet (Trust Wallet, Binance, etc.)</li>
+              <li>
+                2. Send <strong className="text-slate-900 dark:text-white">${monthlyPrice} USDT</strong>{' '}
+                (or multiples) on{' '}
+                <strong className="text-slate-900 dark:text-white">{networkLabel}</strong>
+              </li>
+              <li>
+                3. Paste your transaction ID below and click{' '}
+                <strong className="text-slate-900 dark:text-white">Verify My Payment</strong>
+              </li>
+            </ol>
+
+            <input
+              type="text"
+              value={txHash}
+              onChange={(e) => setTxHash(e.target.value)}
+              placeholder="Paste TRC20 transaction ID (min 12 chars)..."
+              className="w-full min-h-[44px] px-3.5 py-2.5 rounded-lg border border-slate-200 dark:border-white/10 bg-slate-50 dark:bg-[#121722] text-xs font-mono text-slate-900 dark:text-white"
+            />
+
+            {verifyFeedback && (
+              <div
+                className={`p-3 rounded-lg border text-xs font-mono ${
+                  verifyFeedback.ok
+                    ? 'border-emerald-500/30 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300'
+                    : 'border-rose-500/30 bg-rose-500/10 text-rose-700 dark:text-rose-300'
+                }`}
               >
-                {copiedWallet ? 'Copied!' : 'Copy Wallet'}
-              </button>
-            </div>
-          </div>
+                {verifyFeedback.msg}
+              </div>
+            )}
 
-          <ol className="space-y-2.5 text-xs font-mono text-slate-600 dark:text-slate-300 leading-relaxed">
-            <li>1. Open your crypto wallet (Trust Wallet, Binance, etc.)</li>
-            <li>
-              2. Send <strong className="text-slate-900 dark:text-white">${monthlyPrice} USDT</strong>{' '}
-              (or multiples) on{' '}
-              <strong className="text-slate-900 dark:text-white">{networkLabel}</strong>
-            </li>
-            <li>
-              3. Paste your transaction ID below and click{' '}
-              <strong className="text-slate-900 dark:text-white">Verify My Payment</strong>
-            </li>
-          </ol>
-
-          <input
-            type="text"
-            value={txHash}
-            onChange={(e) => setTxHash(e.target.value)}
-            placeholder="Paste TRC20 transaction ID (min 12 chars)..."
-            className="w-full min-h-[44px] px-3.5 py-2.5 rounded-lg border border-slate-200 dark:border-white/10 bg-slate-50 dark:bg-[#121722] text-xs font-mono text-slate-900 dark:text-white"
-          />
-
-          {verifyFeedback && (
-            <div
-              className={`p-3 rounded-lg border text-xs font-mono ${
-                verifyFeedback.ok
-                  ? 'border-emerald-500/30 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300'
-                  : 'border-rose-500/30 bg-rose-500/10 text-rose-700 dark:text-rose-300'
-              }`}
+            <button
+              type="button"
+              disabled={verifying}
+              onClick={handleVerifyPayment}
+              className="w-full min-h-[48px] py-3.5 px-6 rounded-xl bg-gradient-to-r from-cyan-400 via-sky-400 to-indigo-400 text-slate-950 font-display font-extrabold text-sm hover:opacity-95 disabled:opacity-50 flex items-center justify-center gap-2 cursor-pointer"
             >
-              {verifyFeedback.msg}
-            </div>
-          )}
-
-          <button
-            type="button"
-            disabled={verifying}
-            onClick={handleVerifyPayment}
-            className="w-full min-h-[48px] py-3.5 px-6 rounded-xl bg-gradient-to-r from-cyan-400 via-sky-400 to-indigo-400 text-slate-950 font-display font-extrabold text-sm hover:opacity-95 disabled:opacity-50 flex items-center justify-center gap-2 cursor-pointer"
-          >
-            <Zap className="w-4 h-4" />
-            <span>{verifying ? 'Checking Payment...' : 'Verify My Payment'}</span>
-          </button>
+              <Zap className="w-4 h-4" />
+              <span>{verifying ? 'Checking Payment...' : 'Verify My Payment'}</span>
+            </button>
+          </div>
         </div>
 
         {/* Payment Page Footer — Contact Admin for Support */}
@@ -1066,7 +1072,7 @@ export const AccountAndSubscriptionView: React.FC<AccountAndSubscriptionProps> =
   }
 
   return (
-    <div className="max-w-xl space-y-5 sm:space-y-6">
+    <div className="w-full max-w-3xl mx-auto space-y-5 sm:space-y-6">
       <div>
         <div className="flex items-center gap-2.5">
           <User className="w-6 h-6 text-cyan-500" />

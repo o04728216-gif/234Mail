@@ -1126,7 +1126,7 @@ export const ComposeEmailView: React.FC<ComposeEmailViewProps> = ({
     !htmlBody.trim() || htmlBody.trim() === '<p><br></p>' || htmlBody.trim() === '<br>';
 
   return (
-    <form onSubmit={handleSend} className="max-w-3xl mx-auto space-y-5">
+    <form onSubmit={handleSend} className="w-full max-w-6xl xl:max-w-7xl mx-auto space-y-5 sm:space-y-6">
       {/* Page Title matching Reference Screenshots */}
       <div>
         <h1 className="text-2xl sm:text-3xl font-extrabold font-display tracking-tight text-slate-900 dark:text-white flex items-center gap-2.5">
@@ -1279,7 +1279,7 @@ export const ComposeEmailView: React.FC<ComposeEmailViewProps> = ({
         </button>
 
         {openSections.sender && (
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+          <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-4">
             <div>
               <label className="block text-[10px] font-mono text-slate-500 dark:text-slate-400 mb-1.5">
                 FROM NAME

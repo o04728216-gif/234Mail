@@ -592,8 +592,8 @@ export default function App() {
           </div>
         </header>
 
-        <main className="flex-1 esp-grid-bg p-3.5 sm:p-6 lg:p-8 lg:px-10 overflow-y-auto">
-          <div className="max-w-7xl mx-auto">
+        <main className="flex-1 esp-grid-bg p-3.5 sm:p-6 lg:p-8 xl:px-12 overflow-y-auto">
+          <div className="max-w-[1480px] w-full mx-auto">
             <AdminDashboardView
               token={token}
               snapshot={snapshot}
@@ -955,7 +955,7 @@ export default function App() {
       </header>
 
       <div className="flex-1 flex min-h-0 relative overflow-hidden">
-        <aside className="hidden lg:flex lg:flex-col w-60 shrink-0 h-full border-r border-slate-200 dark:border-white/[0.07] bg-white dark:bg-[#090c13]">
+        <aside className="hidden lg:flex lg:flex-col lg:w-64 xl:w-68 shrink-0 h-full border-r border-slate-200 dark:border-white/[0.07] bg-white dark:bg-[#090c13]">
           {renderSidebarContent()}
         </aside>
 
@@ -973,8 +973,8 @@ export default function App() {
           </div>
         )}
 
-        <main className="flex-1 min-w-0 h-full esp-grid-bg p-3.5 sm:p-6 lg:p-8 overflow-y-auto">
-          <div className="max-w-5xl mx-auto">
+        <main className="flex-1 min-w-0 h-full esp-grid-bg p-3.5 sm:p-6 lg:p-8 xl:p-10 overflow-y-auto">
+          <div className="max-w-[1440px] w-full mx-auto">
             {/* Touch-Scrollable Quick Navigation Strip on Mobile & Tablet (< lg) — Zero Extra Sticky Height */}
             <div className="lg:hidden mb-4 -mx-1 px-1 flex items-center gap-1.5 overflow-x-auto no-scrollbar pb-1">
               {flatMobileTabs.map((item) => {
