@@ -13,20 +13,14 @@
     max-width: 100%;
     overflow-x: hidden;
     -webkit-tap-highlight-color: transparent;
+    -webkit-text-size-adjust: 100%;
+    text-size-adjust: 100%;
+    touch-action: pan-x pan-y;
   }
 
   body {
     font-family: var(--font-sans);
     font-feature-settings: "cv02", "cv03", "cv04", "cv11";
-  }
-
-  /* Prevent iOS Safari automatic page zoom when focusing inputs on mobile phones */
-  @media (max-width: 639px) {
-    input:not([type="checkbox"]):not([type="radio"]):not([type="color"]),
-    textarea,
-    select {
-      font-size: 16px;
-    }
   }
 
   h1, h2, .font-display {
@@ -37,6 +31,45 @@
     font-family: var(--font-mono);
     font-variant-numeric: tabular-nums;
   }
+}
+
+/* ============================================================================
+   ANTI-CLICK-ZOOM & ANTI-FOCUS-ZOOM ACROSS ALL MOBILE, TABLET & PC VIEWPORTS
+   (Placed outside @layer base so Tailwind utility classes like text-xs/text-sm
+    never shrink inputs/textareas below 16px and never trigger page zoom)
+   ============================================================================ */
+*,
+*::before,
+*::after {
+  -webkit-text-size-adjust: 100%;
+  text-size-adjust: 100%;
+}
+
+a,
+button,
+input,
+textarea,
+select,
+label,
+summary,
+iframe,
+[role="button"],
+[contenteditable] {
+  touch-action: manipulation;
+}
+
+input:not([type="checkbox"]):not([type="radio"]):not([type="color"]):not([type="range"]),
+textarea,
+select,
+[contenteditable="true"],
+[contenteditable=""] {
+  font-size: 16px !important;
+  line-height: 1.45;
+}
+
+textarea {
+  resize: vertical;
+  max-width: 100%;
 }
 
 /* ============================================================================

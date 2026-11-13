@@ -1153,6 +1153,7 @@ const EmailHtmlReaderFrame: React.FC<EmailHtmlReaderFrameProps> = ({ title, rawH
   const wrappedSrcDoc = useMemo(() => {
     const baseResetCss = `
       <meta charset="utf-8" />
+      <meta name="viewport" content="width=device-width, initial-scale=1.0, minimum-scale=1.0, maximum-scale=1.0, user-scalable=no" />
       <base target="_blank" rel="noopener noreferrer" />
       <style>
         html, body {
@@ -1166,8 +1167,11 @@ const EmailHtmlReaderFrame: React.FC<EmailHtmlReaderFrameProps> = ({ title, rawH
           background-color: #ffffff;
           color: #0f172a;
           font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
-          font-size: 14px;
+          font-size: 16px;
           line-height: 1.6;
+          -webkit-text-size-adjust: 100%;
+          text-size-adjust: 100%;
+          touch-action: manipulation;
           word-wrap: break-word;
           box-sizing: border-box;
         }

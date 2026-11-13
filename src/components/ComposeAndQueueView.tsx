@@ -496,12 +496,28 @@ const EditableEmailIframe: React.FC<EditableEmailIframeProps> = ({
 
   callbacksRef.current = { onHtmlChange, onEditLink, onEditImage };
 
-  const fitContent = () => {
+  const fitContent = (allowScaleRecalc = true) => {
     const iframe = iframeRef.current;
     const doc = iframe?.contentDocument;
     if (!iframe || !doc) return;
     const root = doc.getElementById('esp-email-root') as HTMLDivElement | null;
     if (!root) return;
+
+    // On Desktop preview, never apply CSS zoom so clicking/typing inside the editable email never shifts scale.
+    if (viewportMode === 'desktop') {
+      if (root.style.zoom !== '1') {
+        root.style.zoom = '1';
+      }
+      root.style.width = '100%';
+      const nextHeight = Math.max(360, Math.ceil(root.scrollHeight) + 8);
+      setDesktopHeight((prev) => (Math.abs(prev - nextHeight) > 2 ? nextHeight : prev));
+      return;
+    }
+
+    // On Phone preview, only recalculate horizontal fit when layout/HTML changes (not while focused & typing)
+    if (!allowScaleRecalc && doc.activeElement === root) {
+      return;
+    }
 
     const rawClientWidth = doc.documentElement.clientWidth || iframe.clientWidth;
     const availableWidth = Math.max(0, rawClientWidth - 2);
@@ -520,14 +536,8 @@ const EditableEmailIframe: React.FC<EditableEmailIframeProps> = ({
       root.style.width = '100%';
     }
 
-    const unscaledHeight = root.scrollHeight;
     if (appliedZoom < 1) {
       root.style.zoom = appliedZoom.toFixed(4);
-    }
-
-    if (viewportMode === 'desktop') {
-      const nextHeight = Math.max(360, Math.ceil(unscaledHeight * appliedZoom) + 6);
-      setDesktopHeight((prev) => (Math.abs(prev - nextHeight) > 2 ? nextHeight : prev));
     }
   };
 
@@ -537,8 +547,8 @@ const EditableEmailIframe: React.FC<EditableEmailIframeProps> = ({
     if (!root) return;
     root.querySelectorAll('img').forEach((img) => {
       if (!img.complete) {
-        img.addEventListener('load', fitContent, { once: true });
-        img.addEventListener('error', fitContent, { once: true });
+        img.addEventListener('load', () => fitContent(true), { once: true });
+        img.addEventListener('error', () => fitContent(true), { once: true });
       }
     });
   };
@@ -553,7 +563,7 @@ const EditableEmailIframe: React.FC<EditableEmailIframeProps> = ({
     const combined = isEmpty && !customStylesRef.current ? '<p><br></p>' : `${stylesPrefix}${restoredBody}`;
     lastEmittedHtmlRef.current = combined;
     callbacksRef.current.onHtmlChange(combined);
-    fitContent();
+    fitContent(false);
   };
 
   syncTriggerRef.current = syncBack;
@@ -572,6 +582,7 @@ const EditableEmailIframe: React.FC<EditableEmailIframeProps> = ({
 <html>
 <head>
 <meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0, minimum-scale=1.0, maximum-scale=1.0, user-scalable=no" />
 <style id="esp-base-styles">
   html, body {
     margin: 0 !important;
@@ -579,10 +590,13 @@ const EditableEmailIframe: React.FC<EditableEmailIframeProps> = ({
     background: #ffffff;
     color: #0f172a;
     font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
-    font-size: 14px;
+    font-size: 16px;
     line-height: 1.5;
     -webkit-font-smoothing: antialiased;
-    overflow-x: hidden !important;
+    -webkit-text-size-adjust: 100%;
+    text-size-adjust: 100%;
+    touch-action: manipulation;
+    overflow-x: ${viewportMode === 'desktop' ? 'auto' : 'hidden'} !important;
     ${viewportMode === 'desktop' ? 'height: auto !important; overflow-y: hidden !important;' : 'height: 100%; overflow-y: auto;'}
   }
   ::-webkit-scrollbar { width: 4px; height: 4px; }
@@ -591,6 +605,8 @@ const EditableEmailIframe: React.FC<EditableEmailIframeProps> = ({
   #esp-email-root {
     min-height: ${viewportMode === 'desktop' ? '340px' : '100%'};
     padding: ${viewportMode === 'desktop' ? '18px' : '10px'};
+    font-size: 16px;
+    touch-action: manipulation;
     box-sizing: border-box;
     outline: none;
     word-wrap: break-word;
@@ -599,7 +615,7 @@ const EditableEmailIframe: React.FC<EditableEmailIframeProps> = ({
     content: attr(data-placeholder);
     color: #94a3b8;
     font-style: italic;
-    font-size: 12px;
+    font-size: 16px;
     font-family: monospace;
     pointer-events: none;
   }
@@ -686,8 +702,8 @@ const EditableEmailIframe: React.FC<EditableEmailIframeProps> = ({
       attachImageListeners();
     }
 
-    fitContent();
-    requestAnimationFrame(fitContent);
+    fitContent(true);
+    requestAnimationFrame(() => fitContent(true));
   };
 
   useEffect(() => {
@@ -698,7 +714,7 @@ const EditableEmailIframe: React.FC<EditableEmailIframeProps> = ({
     const iframe = iframeRef.current;
     if (!iframe) return;
     const observer = new ResizeObserver(() => {
-      fitContent();
+      fitContent(false);
     });
     observer.observe(iframe);
     return () => observer.disconnect();
@@ -1816,12 +1832,6 @@ export const ComposeEmailView: React.FC<ComposeEmailViewProps> = ({
                           onClick={() => {
                             syncFromPastePreview();
                             setPreviewViewport('phone');
-                            setTimeout(() => {
-                              previewSectionRef.current?.scrollIntoView({
-                                behavior: 'smooth',
-                                block: 'center',
-                              });
-                            }, 40);
                           }}
                           className={`min-h-[36px] px-3 py-1.5 rounded border inline-flex items-center justify-center gap-1.5 transition-colors cursor-pointer ${
                             previewViewport === 'phone'
