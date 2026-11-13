@@ -6,6 +6,9 @@
   },
   "steps": {
     "install": {
+      "variables": {
+        "BUN_INSTALL_GLOBAL_STORE": "0"
+      },
       "commands": [
         {
           "path": "/app/node_modules/.bin"
@@ -15,7 +18,7 @@
           "dest": "package.json"
         },
         {
-          "cmd": "BUN_INSTALL_GLOBAL_STORE=0 bun install --no-frozen-lockfile",
+          "cmd": "bun install --no-frozen-lockfile",
           "customName": "bun install"
         }
       ]
