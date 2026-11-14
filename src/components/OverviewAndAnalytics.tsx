@@ -50,6 +50,7 @@ export const OverviewView: React.FC<OverviewViewProps> = ({ snapshot, lang, onNa
     !isPaidActive &&
     user.subscriptionStatus !== 'expired' &&
     user.subscriptionStatus !== 'suspended';
+  const isTrialLimitReached = isFreeTrial && (user.campaignsCount || 0) >= 5;
   const runningOrScheduled = jobs.filter((j) => j.status === 'running' || j.status === 'scheduled');
   const totalSent = jobs.reduce((sum, j) => sum + j.sentCount, 0);
   const totalOpened = jobs.reduce((sum, j) => sum + j.openedCount, 0);
@@ -230,9 +231,11 @@ export const OverviewView: React.FC<OverviewViewProps> = ({ snapshot, lang, onNa
               >
                 {isPaidActive
                   ? 'Paid & Active'
-                  : isFreeTrial
-                    ? 'Free Trial (Pay to Send)'
-                    : user.subscriptionStatus}
+                  : isTrialLimitReached
+                    ? 'Payment Required'
+                    : isFreeTrial
+                      ? 'Free Trial'
+                      : user.subscriptionStatus}
               </dd>
             </div>
             <div className="py-3 flex items-center justify-between gap-3">

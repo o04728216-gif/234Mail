@@ -152,6 +152,8 @@ export const DEFAULT_PLATFORM_SETTINGS: PlatformSettings = {
   newUserTrialDays: 7,
 };
 
+export const FREE_TRIAL_CAMPAIGN_LIMIT = 5;
+
 export function isUserPaidAndActive(
   u:
     | {
@@ -169,6 +171,61 @@ export function isUserPaidAndActive(
     u.daysLeft > 0 &&
     (u.paymentsCount || 0) > 0
   );
+}
+
+export function isUserFreeTrial(
+  u:
+    | {
+        role?: UserRole;
+        subscriptionStatus: SubscriptionStatus;
+        daysLeft: number;
+        paymentsCount: number;
+      }
+    | undefined
+): boolean {
+  if (!u || isUserPaidAndActive(u)) return false;
+  return (
+    u.subscriptionStatus === 'pending' ||
+    (u.subscriptionStatus === 'active' && u.daysLeft > 0 && (u.paymentsCount || 0) === 0)
+  );
+}
+
+export function canUserCreateCampaign(
+  u:
+    | {
+        role?: UserRole;
+        subscriptionStatus: SubscriptionStatus;
+        daysLeft: number;
+        paymentsCount: number;
+        campaignsCount?: number;
+      }
+    | undefined
+): boolean {
+  if (!u) return false;
+  if (isUserPaidAndActive(u)) return true;
+  if (isUserFreeTrial(u) && (u.campaignsCount || 0) < FREE_TRIAL_CAMPAIGN_LIMIT) {
+    return true;
+  }
+  return false;
+}
+
+export function canUserDispatchQueuedJobs(
+  u:
+    | {
+        role?: UserRole;
+        subscriptionStatus: SubscriptionStatus;
+        daysLeft: number;
+        paymentsCount: number;
+        campaignsCount?: number;
+      }
+    | undefined
+): boolean {
+  if (!u) return false;
+  if (isUserPaidAndActive(u)) return true;
+  if (isUserFreeTrial(u) && (u.campaignsCount || 0) <= FREE_TRIAL_CAMPAIGN_LIMIT) {
+    return true;
+  }
+  return false;
 }
 
 export function hashPassword(password: string, salt: string): string {
@@ -1149,7 +1206,7 @@ class DataStore {
     const ps = this.state.platformSettings;
     const planDays = Math.max(1, ps.planDurationDays || 30);
 
-    // Self-signup (no overrideStatus and non-admin) enters Free Trial with full workspace access except sending emails
+    // Self-signup (no overrideStatus and non-admin) enters Free Trial quietly (5 campaigns allowed before payment prompt)
     const isAdminOrPaidOverride = role === 'admin' || overrideStatus === 'active';
     const status: SubscriptionStatus =
       overrideStatus ?? (role === 'admin' ? 'active' : 'pending');

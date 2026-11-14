@@ -49,6 +49,7 @@ import type {
   HourlyRateStep,
   LanguageCode,
   QueueJob,
+  UserProfile,
 } from '../types';
 import { apiRequest } from '../utils/api';
 
@@ -742,7 +743,7 @@ interface ComposeEmailViewProps {
   isActive?: boolean;
   initialDraft: DraftItem | null;
   onClearInitialDraft: () => void;
-  onJobCreated: (job: QueueJob) => void;
+  onJobCreated: (job: QueueJob, updatedUser?: UserProfile) => void;
   onDraftsUpdated: (drafts: DraftItem[]) => void;
   onNavigateQueue: () => void;
   onNavigateSmtp?: () => void;
@@ -768,6 +769,25 @@ export const ComposeEmailView: React.FC<ComposeEmailViewProps> = ({
     (snapshot.user.subscriptionStatus === 'active' &&
       snapshot.user.daysLeft > 0 &&
       (snapshot.user.paymentsCount || 0) > 0);
+  const isFreeTrial =
+    !isPaidAndActive &&
+    (snapshot.user.subscriptionStatus === 'pending' ||
+      (snapshot.user.subscriptionStatus === 'active' &&
+        snapshot.user.daysLeft > 0 &&
+        (snapshot.user.paymentsCount || 0) === 0));
+  const canCreateCampaign =
+    isPaidAndActive || (isFreeTrial && (snapshot.user.campaignsCount || 0) < 5);
+  const [showPaymentPrompt, setShowPaymentPrompt] = useState(false);
+
+  useEffect(() => {
+    if (!showPaymentPrompt) return;
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') setShowPaymentPrompt(false);
+    };
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, [showPaymentPrompt]);
+
   const composeStorageKey = `234mail_compose_clean_${snapshot.user.id}`;
 
   const savedCompose = useMemo(() => {
@@ -1082,10 +1102,11 @@ export const ComposeEmailView: React.FC<ComposeEmailViewProps> = ({
     e.preventDefault();
     setFeedback(null);
 
-    if (!isPaidAndActive) {
+    if (!canCreateCampaign) {
+      setShowPaymentPrompt(true);
       setFeedback({
         type: 'err',
-        text: 'Free Trial Mode: Your account must be Paid and Active to send emails. Open Subscription below to activate your paid plan.',
+        text: 'Please complete your $20/month payment on the Subscription page to continue sending campaigns.',
       });
       return;
     }
@@ -1131,7 +1152,7 @@ export const ComposeEmailView: React.FC<ComposeEmailViewProps> = ({
         ? (scheduledFor ? parseScheduleDate(scheduledFor) : getDefaultScheduleDate()).toISOString()
         : null;
 
-      const res = await apiRequest<{ job: QueueJob }>(
+      const res = await apiRequest<{ job: QueueJob; user?: UserProfile }>(
         '/api/jobs',
         {
           method: 'POST',
@@ -1156,7 +1177,7 @@ export const ComposeEmailView: React.FC<ComposeEmailViewProps> = ({
         token
       );
 
-      onJobCreated(res.job);
+      onJobCreated(res.job, res.user);
       setLastDispatchedJobId(res.job.id);
       setFeedback({
         type: 'ok',
@@ -1251,13 +1272,13 @@ export const ComposeEmailView: React.FC<ComposeEmailViewProps> = ({
         >
           <span className="leading-relaxed">{feedback.text}</span>
           <div className="flex items-center gap-2 shrink-0 self-end sm:self-auto">
-            {!isPaidAndActive && feedback.type === 'err' && onNavigateSubscription && (
+            {!canCreateCampaign && feedback.type === 'err' && onNavigateSubscription && (
               <button
                 type="button"
                 onClick={onNavigateSubscription}
                 className="min-h-[34px] px-3.5 py-1.5 rounded-lg bg-cyan-500 text-slate-950 font-bold whitespace-nowrap hover:opacity-95 cursor-pointer"
               >
-                Activate Paid Plan →
+                Complete Payment →
               </button>
             )}
             {feedback.type === 'err' &&
@@ -2285,6 +2306,69 @@ export const ComposeEmailView: React.FC<ComposeEmailViewProps> = ({
           <span>{submitting ? 'Sending...' : t(lang, 'sendEmailsBtn')}</span>
         </button>
       </div>
+
+      {showPaymentPrompt && (
+        <div
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="payment-required-modal-title"
+          onClick={() => setShowPaymentPrompt(false)}
+          className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/75 backdrop-blur-sm"
+        >
+          <div
+            onClick={(e) => e.stopPropagation()}
+            className="w-full max-w-md rounded-2xl border border-slate-200 dark:border-white/[0.12] bg-white dark:bg-[#0d1119] p-5 sm:p-6 shadow-2xl space-y-4 text-left"
+          >
+            <div className="flex items-start justify-between gap-3">
+              <div>
+                <h2
+                  id="payment-required-modal-title"
+                  className="text-base sm:text-lg font-bold font-display text-slate-900 dark:text-white"
+                >
+                  Complete Payment to Continue Sending
+                </h2>
+                <p className="text-xs font-mono text-slate-600 dark:text-slate-400 mt-1.5 leading-relaxed">
+                  Please activate your ${snapshot.platformSettings?.monthlyPriceUsd || 20}/month
+                  subscription plan to continue sending email campaigns.
+                </p>
+              </div>
+              <button
+                type="button"
+                aria-label="Close payment prompt"
+                onClick={() => setShowPaymentPrompt(false)}
+                className="p-1.5 rounded-lg text-slate-400 hover:text-slate-700 dark:hover:text-white hover:bg-slate-100 dark:hover:bg-white/5 cursor-pointer"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            <div className="flex items-center justify-end gap-2.5 pt-2">
+              <button
+                type="button"
+                onClick={() => setShowPaymentPrompt(false)}
+                className="min-h-[40px] px-4 py-2 rounded-xl border border-slate-200 dark:border-white/10 bg-white dark:bg-[#141a26] hover:bg-slate-100 dark:hover:bg-white/10 text-xs font-mono font-semibold text-slate-700 dark:text-slate-200 cursor-pointer"
+              >
+                Close
+              </button>
+              {onNavigateSubscription && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setShowPaymentPrompt(false);
+                    onNavigateSubscription();
+                  }}
+                  className="min-h-[40px] px-4 py-2 rounded-xl bg-gradient-to-r from-cyan-400 via-sky-400 to-indigo-400 text-slate-950 text-xs font-display font-extrabold inline-flex items-center gap-1.5 hover:opacity-95 cursor-pointer"
+                >
+                  <Zap className="w-3.5 h-3.5" />
+                  <span>
+                    Pay ${snapshot.platformSettings?.monthlyPriceUsd || 20} Now →
+                  </span>
+                </button>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
     </form>
   );
 };

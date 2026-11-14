@@ -856,6 +856,7 @@ export const AccountAndSubscriptionView: React.FC<AccountAndSubscriptionProps> =
     !isPaidActive &&
     ((user.subscriptionStatus === 'pending' && (!user.expiresAt || user.daysLeft > 0)) ||
       (user.subscriptionStatus === 'active' && user.daysLeft > 0));
+  const isTrialLimitReached = isFreeTrial && (user.campaignsCount || 0) >= 5;
 
   const [copiedWallet, setCopiedWallet] = useState(false);
   const [txHash, setTxHash] = useState('');
@@ -894,11 +895,13 @@ export const AccountAndSubscriptionView: React.FC<AccountAndSubscriptionProps> =
   if (mode === 'subscription') {
     const statusTitle = isPaidActive
       ? 'Paid & Active Plan'
-      : isFreeTrial
-        ? 'Free Trial — Activate Paid Plan to Send Emails'
-        : user.subscriptionStatus === 'suspended'
-          ? 'Account Suspended — Payment Required'
-          : 'Subscription Expired — Renewal Required';
+      : isTrialLimitReached
+        ? 'Payment Required to Continue Sending'
+        : isFreeTrial
+          ? 'Free Trial'
+          : user.subscriptionStatus === 'suspended'
+            ? 'Account Suspended — Payment Required'
+            : 'Subscription Expired — Renewal Required';
 
     return (
       <div className="w-full max-w-4xl mx-auto space-y-5 sm:space-y-6">
@@ -926,11 +929,13 @@ export const AccountAndSubscriptionView: React.FC<AccountAndSubscriptionProps> =
             <div className="text-xs font-mono tabular-nums text-slate-600 dark:text-slate-400 mt-0.5">
               {isPaidActive
                 ? `Expires: ${user.expiresAt ? formatDayMonthYear(user.expiresAt) : 'Active'} (${user.daysLeft} days left) · Email sending unlocked`
-                : isFreeTrial
-                  ? `${user.daysLeft > 0 ? `${user.daysLeft} trial day(s) remaining · ` : ''}Complete payment below to make your account Paid & Active and unlock email sending`
-                  : user.expiresAt
-                    ? `Expired on ${formatDayMonthYear(user.expiresAt)} — Complete payment below to reactivate your account`
-                    : 'Complete payment below to activate your account immediately'}
+                : isTrialLimitReached
+                  ? 'Complete payment below to activate your monthly plan and continue sending emails'
+                  : isFreeTrial
+                    ? 'Upgrade below anytime for 30 days of full Paid & Active access'
+                    : user.expiresAt
+                      ? `Expired on ${formatDayMonthYear(user.expiresAt)} — Complete payment below to reactivate your account`
+                      : 'Complete payment below to activate your account immediately'}
             </div>
           </div>
           {isPaidActive ? (
@@ -954,14 +959,20 @@ export const AccountAndSubscriptionView: React.FC<AccountAndSubscriptionProps> =
 
         <div>
           <h1 className="text-xl sm:text-3xl font-extrabold font-display tracking-tight text-slate-900 dark:text-white">
-            {isPaidActive ? 'Extend Paid Subscription' : 'Activate Paid Plan to Send Emails'}
+            {isPaidActive
+              ? 'Extend Paid Subscription'
+              : isTrialLimitReached
+                ? 'Complete Payment to Continue Sending'
+                : 'Activate Paid Plan'}
           </h1>
           <p className="text-xs sm:text-sm font-mono text-slate-600 dark:text-slate-400 mt-1">
             {isPaidActive
               ? 'Send USDT (TRC20) to add access time. Payments automatically stack on your current expiration date.'
-              : isFreeTrial
-                ? 'You are signed in on a Free Trial. To dispatch bulk or single emails, complete USDT payment below to upgrade your account to Paid & Active.'
-                : 'Your account is not currently active. Send USDT below and verify your transaction ID to unlock bulk email sending, SMTP Inbox, and tracking right away.'}
+              : isTrialLimitReached
+                ? 'Complete your $20 USDT payment below to unlock unlimited email sending for 30 days.'
+                : isFreeTrial
+                  ? 'Send USDT below and verify your transaction ID to activate your 30-day Paid & Active plan.'
+                  : 'Your account is not currently active. Send USDT below and verify your transaction ID to unlock bulk email sending, SMTP Inbox, and tracking right away.'}
           </p>
         </div>
 
@@ -1113,21 +1124,25 @@ export const AccountAndSubscriptionView: React.FC<AccountAndSubscriptionProps> =
             >
               {isPaidActive
                 ? `Paid & Active (${user.daysLeft} days left)`
-                : isFreeTrial
-                  ? `Free Trial${user.daysLeft > 0 ? ` (${user.daysLeft}d left)` : ''} — Pay to Send`
-                  : user.subscriptionStatus}
+                : isTrialLimitReached
+                  ? 'Free Trial — Payment Required'
+                  : isFreeTrial
+                    ? 'Free Trial'
+                    : user.subscriptionStatus}
             </dd>
           </div>
           <div className="py-3.5 flex items-center justify-between gap-3">
             <dt className="text-slate-500 dark:text-slate-400 shrink-0">Email Sending</dt>
             <dd
               className={
-                isPaidActive
+                isPaidActive || (isFreeTrial && !isTrialLimitReached)
                   ? 'text-emerald-600 dark:text-emerald-400 font-semibold text-right'
                   : 'text-amber-600 dark:text-amber-400 font-semibold text-right'
               }
             >
-              {isPaidActive ? 'Unlocked' : 'Locked until Paid & Active'}
+              {isPaidActive || (isFreeTrial && !isTrialLimitReached)
+                ? 'Active'
+                : 'Payment Required'}
             </dd>
           </div>
           <div className="py-3.5 flex items-center justify-between gap-3">

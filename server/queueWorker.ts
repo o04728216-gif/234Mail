@@ -1,7 +1,7 @@
 import crypto from 'node:crypto';
 import type { HourlyRateStep, QueueJob, SystemAlert, TelemetryPoint } from '../src/types.ts';
 import { dispatchSingleEmail, refreshRecoveredSmtpNodes } from './smtpService.ts';
-import { isUserPaidAndActive, store, type StoredJob } from './store.ts';
+import { canUserDispatchQueuedJobs, store, type StoredJob } from './store.ts';
 
 export const WARMUP_RATE_STEPS: HourlyRateStep[] = [50, 100, 200, 300, 400, 500, 1000];
 
@@ -85,7 +85,7 @@ class QueueWorkerEngine {
     for (const job of store.state.jobs) {
       const ownerId = job.ownerId || 'usr_geekytycoon';
       const jobOwner = store.state.users.find((u) => u.id === ownerId);
-      if (jobOwner && !isUserPaidAndActive(jobOwner)) {
+      if (jobOwner && !canUserDispatchQueuedJobs(jobOwner)) {
         continue;
       }
 
@@ -134,13 +134,13 @@ class QueueWorkerEngine {
     for (const job of runningJobs) {
       const ownerId = job.ownerId || 'usr_geekytycoon';
       const jobOwner = store.state.users.find((u) => u.id === ownerId);
-      if (jobOwner && !isUserPaidAndActive(jobOwner)) {
+      if (jobOwner && !canUserDispatchQueuedJobs(jobOwner)) {
         job.status = 'paused';
         job.currentThroughputPerSec = 0;
         job.limitType = 'manual';
         job.autoResumeAt = null;
         job.pauseReason =
-          'Reason: Account must be Paid and Active to send emails — complete payment on the Subscription page, then click Resume.';
+          'Reason: Please complete your $20/month payment on the Subscription page, then click Resume.';
         stateMutated = true;
         this.broadcast('job:updated', stripRecipients(job), ownerId);
         continue;

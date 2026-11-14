@@ -28,8 +28,11 @@ import {
   verifySmtpConnection,
 } from './server/smtpService.ts';
 import {
+  canUserCreateCampaign,
+  canUserDispatchQueuedJobs,
   hashApiKey,
   hashPassword,
+  isUserFreeTrial,
   isUserPaidAndActive,
   store,
   syncUserActiveRevenue,
@@ -1552,12 +1555,10 @@ async function bootstrap() {
   // ============================================================================
   app.post('/api/jobs', requireAuth, (req: AuthenticatedRequest, res: Response) => {
     const sender = req.user!;
-    if (!isUserPaidAndActive(sender)) {
-      const isTrial =
-        sender.subscriptionStatus === 'pending' || (sender.paymentsCount || 0) === 0;
+    if (!canUserCreateCampaign(sender)) {
       res.status(402).json({
-        error: isTrial
-          ? 'Free Trial accounts cannot send emails yet. Please complete payment on the Subscription page to make your account Paid & Active.'
+        error: isUserFreeTrial(sender)
+          ? 'Please complete your $20/month payment on the Subscription page to continue sending campaigns.'
           : 'Your account must be Paid and Active to send emails. Please renew on the Subscription page.',
       });
       return;
@@ -1719,9 +1720,11 @@ async function bootstrap() {
     store.scheduleSave();
 
     const publicJob = stripRecipients(newJob);
+    const updatedSender = store.sanitizeUser(sender);
     broadcast('job:created', publicJob, sender.id);
+    broadcast('user:updated', updatedSender, sender.id);
     broadcast('users:updated', getSortedPublicUsers());
-    res.status(201).json({ job: publicJob });
+    res.status(201).json({ job: publicJob, user: updatedSender });
   });
 
   app.patch('/api/jobs/:jobId', requireAuth, (req: AuthenticatedRequest, res: Response) => {
@@ -1750,10 +1753,10 @@ async function bootstrap() {
       (action === 'start_now' && job.status === 'scheduled')
     ) {
       const jobOwner = store.state.users.find((u) => u.id === jobOwnerId);
-      if (req.user!.role !== 'admin' && !isUserPaidAndActive(jobOwner || req.user)) {
+      if (req.user!.role !== 'admin' && !canUserDispatchQueuedJobs(jobOwner || req.user)) {
         res.status(402).json({
           error:
-            'Your account must be Paid and Active to send or resume emails. Please complete payment on the Subscription page.',
+            'Please complete your $20/month payment on the Subscription page to resume or send emails.',
         });
         return;
       }
@@ -2018,10 +2021,10 @@ async function bootstrap() {
 
     const ownerId = keyRecord.ownerId || 'usr_geekytycoon';
     const ownerUser = store.state.users.find((u) => u.id === ownerId);
-    if (!isUserPaidAndActive(ownerUser)) {
+    if (!canUserCreateCampaign(ownerUser)) {
       res.status(402).json({
         error:
-          'Account must be Paid and Active to send emails. Please complete payment on the Subscription page.',
+          'Please complete your $20/month payment on the Subscription page to continue sending emails.',
       });
       return;
     }
@@ -2042,6 +2045,12 @@ async function bootstrap() {
       trackingId,
       appBaseUrl: getRequestOrigin(req),
     });
+
+    if (ownerUser && !isUserPaidAndActive(ownerUser)) {
+      ownerUser.campaignsCount = (ownerUser.campaignsCount || 0) + 1;
+      broadcast('user:updated', store.sanitizeUser(ownerUser), ownerUser.id);
+      broadcast('users:updated', getSortedPublicUsers());
+    }
 
     store.scheduleSave();
     res.status(dispatchRes.ok ? 200 : 502).json({

@@ -84,6 +84,8 @@ function getUserThemeStorageKey(userId: string): string {
   return `234mail_user_theme_${userId}`;
 }
 
+const FREE_TRIAL_CAMPAIGN_LIMIT = 5;
+
 function userIsPaidAndActive(user: UserProfile): boolean {
   return (
     user.role === 'admin' ||
@@ -91,6 +93,17 @@ function userIsPaidAndActive(user: UserProfile): boolean {
       user.daysLeft > 0 &&
       (user.paymentsCount || 0) > 0)
   );
+}
+
+function userNeedsPaymentToSend(user: UserProfile): boolean {
+  if (userIsPaidAndActive(user)) return false;
+  const isTrial =
+    user.subscriptionStatus === 'pending' ||
+    (user.subscriptionStatus === 'active' && user.daysLeft > 0 && (user.paymentsCount || 0) === 0);
+  if (isTrial && (user.campaignsCount || 0) < FREE_TRIAL_CAMPAIGN_LIMIT) {
+    return false;
+  }
+  return true;
 }
 
 function userCanAccessWorkspace(user: UserProfile): boolean {
@@ -679,6 +692,7 @@ export default function App() {
   }
 
   const isPaidAndActive = userIsPaidAndActive(snapshot.user);
+  const needsPaymentToSend = userNeedsPaymentToSend(snapshot.user);
   const canAccessWorkspace = userCanAccessWorkspace(snapshot.user);
 
   const renderImpersonationBanner = () =>
@@ -978,8 +992,7 @@ export default function App() {
               onClick={() => selectTab('subscription')}
               className="inline-flex items-center gap-1.5 px-2.5 py-1 min-h-[36px] rounded-lg border border-amber-500/40 bg-amber-500/10 text-amber-700 dark:text-amber-300 font-semibold whitespace-nowrap hover:bg-amber-500/20 transition-colors cursor-pointer"
             >
-              <span>Free Trial</span>
-              <span className="hidden sm:inline">· Pay to Send</span>
+              <span>{needsPaymentToSend ? 'Activate Plan' : 'Free Trial'}</span>
             </button>
           )}
 
@@ -1072,17 +1085,25 @@ export default function App() {
                 isActive={activeTab === 'compose'}
                 initialDraft={draftToEdit}
                 onClearInitialDraft={() => setDraftToEdit(null)}
-                onJobCreated={(job) =>
-                  setSnapshot((prev) =>
-                    prev
-                      ? {
-                          ...prev,
-                          jobs: prev.jobs.some((j) => j.id === job.id)
-                            ? prev.jobs
-                            : [job, ...prev.jobs],
-                        }
-                      : prev
-                  )
+                onJobCreated={(job, updatedUser) =>
+                  setSnapshot((prev) => {
+                    if (!prev) return prev;
+                    const nextUser =
+                      updatedUser ||
+                      (prev.jobs.some((j) => j.id === job.id)
+                        ? prev.user
+                        : {
+                            ...prev.user,
+                            campaignsCount: (prev.user.campaignsCount || 0) + 1,
+                          });
+                    return {
+                      ...prev,
+                      user: nextUser,
+                      jobs: prev.jobs.some((j) => j.id === job.id)
+                        ? prev.jobs
+                        : [job, ...prev.jobs],
+                    };
+                  })
                 }
                 onDraftsUpdated={(drafts) =>
                   setSnapshot((prev) => (prev ? { ...prev, drafts } : prev))

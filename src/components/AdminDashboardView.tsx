@@ -1047,8 +1047,8 @@ export const AdminDashboardView: React.FC<AdminDashboardViewProps> = ({
                 onChange={(e) => setDefaultSignupStatus(e.target.value as 'pending' | 'active')}
                 className="w-full px-3 py-2 rounded-lg border border-slate-200 dark:border-white/10 bg-slate-50 dark:bg-[#131822] text-slate-900 dark:text-white"
               >
-                <option value="pending">Free Trial (Sign In Free · Pay to Send)</option>
-                <option value="active">Free Trial (Sign In Free · Pay to Send)</option>
+                <option value="pending">Free Trial</option>
+                <option value="active">Free Trial</option>
               </select>
             </div>
 
@@ -1162,7 +1162,7 @@ export const AdminDashboardView: React.FC<AdminDashboardViewProps> = ({
                 onChange={(e) => setNewStatus(e.target.value as SubscriptionStatus)}
                 className="w-full px-3 py-2 rounded-lg border border-slate-200 dark:border-white/10 bg-slate-50 dark:bg-[#131822] text-slate-900 dark:text-white"
               >
-                <option value="pending">Free Trial (Pay to Send)</option>
+                <option value="pending">Free Trial</option>
                 <option value="active">Paid &amp; Active</option>
                 <option value="expired">Expired</option>
               </select>

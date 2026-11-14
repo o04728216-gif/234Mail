@@ -703,8 +703,7 @@ export const LandingAuthView: React.FC<LandingAuthViewProps> = ({
 
                   {authTab === 'register' && (
                     <p className="text-xs text-cyan-700 dark:text-cyan-300 bg-cyan-500/10 border border-cyan-500/25 rounded-lg px-3 py-2 leading-relaxed">
-                      Sign up for free to explore the dashboard first. Activate the $20/month plan
-                      anytime when you&apos;re ready to send emails.
+                      Create your account in seconds to get started right away.
                     </p>
                   )}
 
@@ -741,8 +740,8 @@ export const LandingAuthView: React.FC<LandingAuthViewProps> = ({
                 Simple Pricing — $20 / Month
               </h2>
               <p className="text-sm sm:text-base text-slate-600 dark:text-slate-400 leading-relaxed">
-                Try the dashboard for free first. Pay one simple monthly price when you are ready
-                to start sending emails.
+                Get started in seconds. Unlock unlimited monthly access for one simple $20/month
+                flat price.
               </p>
             </div>
 
