@@ -2260,16 +2260,18 @@ export const ComposeEmailView: React.FC<ComposeEmailViewProps> = ({
         )}
       </section>
 
-      {/* Bottom Save Draft + Send Emails (Sending Requires Paid & Active Account) */}
+      {/* Bottom Save Draft + Send Emails */}
       <div className="space-y-3 pt-1">
-        <button
-          type="button"
-          onClick={handleSaveDraft}
-          className="w-full sm:w-auto min-h-[42px] px-4 py-2 rounded-lg border border-indigo-500/30 bg-indigo-500/10 text-xs font-mono text-indigo-700 dark:text-indigo-300 hover:bg-indigo-500/20 inline-flex items-center justify-center gap-2 transition-colors cursor-pointer"
-        >
-          <Save className="w-3.5 h-3.5" />
-          <span>{t(lang, 'saveDraft')}</span>
-        </button>
+        <div className="flex items-center justify-start">
+          <button
+            type="button"
+            onClick={handleSaveDraft}
+            className="w-auto min-h-[42px] px-4 py-2 rounded-lg border border-indigo-500/30 bg-indigo-500/10 text-xs font-mono text-indigo-700 dark:text-indigo-300 hover:bg-indigo-500/20 inline-flex items-center justify-center gap-2 whitespace-nowrap transition-colors cursor-pointer"
+          >
+            <Save className="w-3.5 h-3.5 shrink-0" />
+            <span>{t(lang, 'saveDraft')}</span>
+          </button>
+        </div>
 
         <button
           type="submit"
@@ -2279,21 +2281,6 @@ export const ComposeEmailView: React.FC<ComposeEmailViewProps> = ({
           <Send className="w-4 h-4" />
           <span>{submitting ? 'Sending...' : t(lang, 'sendEmailsBtn')}</span>
         </button>
-
-        {!isPaidAndActive && (
-          <div className="px-4 py-3 rounded-xl border border-amber-500/35 bg-amber-500/10 flex flex-col sm:flex-row sm:items-center justify-between gap-2.5 text-xs font-mono">
-            <span className="text-amber-800 dark:text-amber-200">
-              Free Trial: Sending emails requires a <strong>Paid &amp; Active</strong> account.
-            </span>
-            <button
-              type="button"
-              onClick={() => onNavigateSubscription?.()}
-              className="w-full sm:w-auto min-h-[36px] px-3.5 py-1.5 rounded-lg bg-cyan-500 text-slate-950 font-bold whitespace-nowrap shrink-0 hover:opacity-95 cursor-pointer"
-            >
-              Pay &amp; Activate →
-            </button>
-          </div>
-        )}
       </div>
     </form>
   );
@@ -2321,7 +2308,22 @@ export const QueueMonitorView: React.FC<QueueMonitorViewProps> = ({
   onJobsDeleted,
 }) => {
   const [currentPage, setCurrentPage] = useState(1);
-  const [deletingJobId, setDeletingJobId] = useState<string | null>(null);
+  const [deleteModal, setDeleteModal] = useState<
+    null | { mode: 'single'; job: QueueJob } | { mode: 'all'; count: number }
+  >(null);
+  const [deletingBusy, setDeletingBusy] = useState(false);
+  const [deleteError, setDeleteError] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!deleteModal || deletingBusy) return;
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        setDeleteModal(null);
+      }
+    };
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, [deleteModal, deletingBusy]);
 
   const totalJobs = snapshot.jobs.length;
   const totalPages = Math.max(1, Math.ceil(totalJobs / QUEUE_PAGE_SIZE));
@@ -2365,19 +2367,38 @@ export const QueueMonitorView: React.FC<QueueMonitorViewProps> = ({
     onJobUpdated(res.job);
   };
 
-  const deleteJob = async (jobId: string) => {
-    setDeletingJobId(jobId);
+  const handleConfirmDelete = async () => {
+    if (!deleteModal || deletingBusy) return;
+    setDeleteError(null);
+    setDeletingBusy(true);
     try {
-      const res = await apiRequest<{ deletedIds: string[] }>(
-        `/api/jobs/${jobId}`,
-        { method: 'DELETE' },
-        token
-      );
-      onJobsDeleted?.(res.deletedIds?.length ? res.deletedIds : [jobId]);
+      if (deleteModal.mode === 'single') {
+        const jobId = deleteModal.job.id;
+        const res = await apiRequest<{ deletedIds: string[] }>(
+          `/api/jobs/${jobId}`,
+          { method: 'DELETE' },
+          token
+        );
+        onJobsDeleted?.(res.deletedIds?.length ? res.deletedIds : [jobId]);
+      } else {
+        const res = await apiRequest<{ deletedIds: string[] }>(
+          '/api/jobs',
+          { method: 'DELETE' },
+          token
+        );
+        onJobsDeleted?.(res.deletedIds || snapshot.jobs.map((j) => j.id));
+        setCurrentPage(1);
+      }
+      setDeleteModal(null);
+    } catch (err) {
+      setDeleteError(err instanceof Error ? err.message : 'Could not delete queued email(s)');
     } finally {
-      setDeletingJobId(null);
+      setDeletingBusy(false);
     }
   };
+
+  const activeDeletingJobId =
+    deletingBusy && deleteModal?.mode === 'single' ? deleteModal.job.id : null;
 
   const renderPaginationBar = () => (
     <div className="px-4 py-3 rounded-xl border border-slate-200 dark:border-white/[0.08] bg-white dark:bg-[#0d1119] flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-xs font-mono">
@@ -2434,14 +2455,37 @@ export const QueueMonitorView: React.FC<QueueMonitorViewProps> = ({
 
   return (
     <div className="space-y-6">
-      <div>
-        <h1 className="text-2xl sm:text-3xl font-extrabold font-display tracking-tight text-slate-900 dark:text-white">
-          Email Queue
-        </h1>
-        <p className="text-xs sm:text-sm font-mono text-slate-600 dark:text-slate-400 mt-1">
-          View your queued and sending emails, adjust hourly speed, or pause anytime — paginated at 50 per page.
-        </p>
+      <div className="flex flex-col sm:flex-row sm:items-end justify-between gap-4">
+        <div>
+          <h1 className="text-2xl sm:text-3xl font-extrabold font-display tracking-tight text-slate-900 dark:text-white">
+            Email Queue
+          </h1>
+          <p className="text-xs sm:text-sm font-mono text-slate-600 dark:text-slate-400 mt-1">
+            View your queued and sending emails, adjust hourly speed, or pause anytime — paginated at 50 per page.
+          </p>
+        </div>
+
+        {totalJobs > 0 && (
+          <button
+            type="button"
+            disabled={deletingBusy}
+            onClick={() => {
+              setDeleteError(null);
+              setDeleteModal({ mode: 'all', count: totalJobs });
+            }}
+            className="min-h-[40px] px-3.5 py-2 rounded-lg border border-rose-500/35 bg-rose-500/10 hover:bg-rose-500/20 disabled:opacity-50 text-xs font-mono font-semibold text-rose-600 dark:text-rose-400 inline-flex items-center justify-center gap-1.5 whitespace-nowrap cursor-pointer shrink-0 self-start sm:self-auto"
+          >
+            <Trash2 className="w-3.5 h-3.5" />
+            <span>Delete All Queue</span>
+          </button>
+        )}
       </div>
+
+      {deleteError && !deleteModal && (
+        <div className="px-4 py-3 rounded-xl border border-rose-500/30 bg-rose-500/10 text-xs font-mono text-rose-700 dark:text-rose-300">
+          {deleteError}
+        </div>
+      )}
 
       {renderPaginationBar()}
 
@@ -2611,13 +2655,16 @@ export const QueueMonitorView: React.FC<QueueMonitorViewProps> = ({
 
                   <button
                     type="button"
-                    disabled={deletingJobId === job.id}
-                    onClick={() => deleteJob(job.id)}
+                    disabled={activeDeletingJobId === job.id}
+                    onClick={() => {
+                      setDeleteError(null);
+                      setDeleteModal({ mode: 'single', job });
+                    }}
                     title="Delete from Email Queue & Sent"
                     className="min-h-[38px] px-3 py-1.5 rounded-lg border border-rose-500/35 bg-rose-500/10 hover:bg-rose-500/20 disabled:opacity-50 text-rose-600 dark:text-rose-400 text-xs font-medium inline-flex items-center gap-1 cursor-pointer"
                   >
                     <Trash2 className="w-3.5 h-3.5" />
-                    <span>{deletingJobId === job.id ? '...' : 'Delete'}</span>
+                    <span>{activeDeletingJobId === job.id ? '...' : 'Delete'}</span>
                   </button>
                 </div>
               </div>
@@ -2803,6 +2850,119 @@ export const QueueMonitorView: React.FC<QueueMonitorViewProps> = ({
       </div>
 
       {totalJobs > QUEUE_PAGE_SIZE && renderPaginationBar()}
+
+      {/* Delete Reconfirmation Modal (Single or Delete All) */}
+      {deleteModal && (
+        <div
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="queue-delete-modal-title"
+          onClick={() => {
+            if (!deletingBusy) setDeleteModal(null);
+          }}
+          className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/75 backdrop-blur-sm"
+        >
+          <div
+            onClick={(e) => e.stopPropagation()}
+            className="w-full max-w-md rounded-2xl border border-slate-200 dark:border-white/[0.12] bg-white dark:bg-[#0d1119] p-5 sm:p-6 shadow-2xl space-y-4"
+          >
+            <div className="flex items-start justify-between gap-3">
+              <div className="flex items-center gap-3 min-w-0">
+                <div className="w-10 h-10 rounded-xl border border-rose-500/35 bg-rose-500/15 flex items-center justify-center text-rose-600 dark:text-rose-400 shrink-0">
+                  <AlertTriangle className="w-5 h-5" />
+                </div>
+                <div className="min-w-0">
+                  <h2
+                    id="queue-delete-modal-title"
+                    className="text-base sm:text-lg font-bold text-slate-900 dark:text-white"
+                  >
+                    {deleteModal.mode === 'all'
+                      ? 'Delete All Queued Emails?'
+                      : 'Delete Queued Email?'}
+                  </h2>
+                  <p className="text-[11px] font-mono text-slate-500 dark:text-slate-400">
+                    Please confirm before deleting
+                  </p>
+                </div>
+              </div>
+
+              <button
+                type="button"
+                aria-label="Close confirmation modal"
+                disabled={deletingBusy}
+                onClick={() => setDeleteModal(null)}
+                className="p-1.5 rounded-lg text-slate-400 hover:text-slate-700 dark:hover:text-white hover:bg-slate-100 dark:hover:bg-white/5 disabled:opacity-40 cursor-pointer"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            <div className="rounded-xl border border-slate-200 dark:border-white/[0.08] bg-slate-50 dark:bg-[#121722] p-3.5 text-xs font-mono space-y-1">
+              {deleteModal.mode === 'single' ? (
+                <>
+                  <div className="font-sans font-bold text-slate-900 dark:text-white break-words">
+                    {deleteModal.job.subject}
+                  </div>
+                  <div className="text-slate-600 dark:text-slate-300 break-all">
+                    From: {deleteModal.job.fromEmail}
+                  </div>
+                  <div className="text-[11px] text-slate-500 dark:text-slate-400">
+                    Delivered: {deleteModal.job.sentCount.toLocaleString()} /{' '}
+                    {deleteModal.job.totalRecipients.toLocaleString()} · Status:{' '}
+                    <span className="uppercase">{deleteModal.job.status}</span>
+                  </div>
+                </>
+              ) : (
+                <div className="font-semibold text-rose-600 dark:text-rose-400">
+                  All {deleteModal.count.toLocaleString()} email campaign(s) in your queue
+                </div>
+              )}
+            </div>
+
+            <p className="text-xs font-mono text-slate-600 dark:text-slate-300 leading-relaxed">
+              Are you sure you want to delete{' '}
+              {deleteModal.mode === 'all' ? 'all queued emails' : 'this queued email'}? Any active
+              sending will stop immediately, and {deleteModal.mode === 'all' ? 'they' : 'it'} will
+              be permanently removed from both{' '}
+              <span className="font-semibold text-slate-900 dark:text-white">Email Queue</span> and{' '}
+              <span className="font-semibold text-slate-900 dark:text-white">Sent</span>. This
+              action cannot be undone.
+            </p>
+
+            {deleteError && (
+              <div className="px-3 py-2 rounded-lg border border-rose-500/35 bg-rose-500/10 text-xs font-mono text-rose-700 dark:text-rose-300">
+                {deleteError}
+              </div>
+            )}
+
+            <div className="flex flex-wrap items-center justify-end gap-2.5 pt-1">
+              <button
+                type="button"
+                disabled={deletingBusy}
+                onClick={() => setDeleteModal(null)}
+                className="min-h-[40px] px-4 py-2 rounded-xl border border-slate-200 dark:border-white/10 bg-white dark:bg-[#141a26] hover:bg-slate-100 dark:hover:bg-white/10 disabled:opacity-50 text-xs font-mono font-semibold text-slate-700 dark:text-slate-200 cursor-pointer"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                disabled={deletingBusy}
+                onClick={handleConfirmDelete}
+                className="min-h-[40px] px-4 py-2 rounded-xl bg-rose-500 hover:bg-rose-600 disabled:opacity-50 text-xs font-mono font-bold text-white inline-flex items-center justify-center gap-1.5 cursor-pointer"
+              >
+                <Trash2 className="w-3.5 h-3.5" />
+                <span>
+                  {deletingBusy
+                    ? 'Deleting...'
+                    : deleteModal.mode === 'all'
+                      ? 'Yes, Delete All'
+                      : 'Yes, Delete'}
+                </span>
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };

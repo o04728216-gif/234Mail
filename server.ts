@@ -624,7 +624,7 @@ async function bootstrap() {
 
       const ps = store.state.platformSettings;
       const planDays = Math.max(1, ps.planDurationDays || 30);
-      const price = Math.max(1, ps.monthlyPriceUsd || 50);
+      const price = Math.max(1, ps.monthlyPriceUsd || 20);
 
       if (body.action === 'activate') {
         const addDays =

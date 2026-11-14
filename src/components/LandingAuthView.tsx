@@ -3,18 +3,19 @@ import {
   ArrowRight,
   ArrowUpRight,
   Check,
+  Eye,
+  EyeOff,
   Mail,
   MessageCircle,
-  Palette,
+  X,
 } from 'lucide-react';
-import { THEME_OPTIONS, t } from '../i18n';
-import type { DashboardSnapshot, ThemeId } from '../types';
+import type { DashboardSnapshot } from '../types';
 import { apiRequest } from '../utils/api';
+import { PWAInstallButton } from './PWAInstallButton';
 
 interface LandingAuthViewProps {
-  theme: ThemeId;
-  onSelectTheme: (nextTheme: ThemeId) => void;
   loggedOutMessage: string | null;
+  onDismissLoggedOutMessage?: () => void;
   resetToken?: string | null;
   onClearResetToken?: () => void;
   onNavigateUrl?: (nextPath: string) => void;
@@ -24,9 +25,8 @@ interface LandingAuthViewProps {
 type AuthMode = 'signin' | 'register' | 'forgot' | 'new_password';
 
 export const LandingAuthView: React.FC<LandingAuthViewProps> = ({
-  theme,
-  onSelectTheme,
   loggedOutMessage,
+  onDismissLoggedOutMessage,
   resetToken,
   onClearResetToken,
   onNavigateUrl,
@@ -38,8 +38,12 @@ export const LandingAuthView: React.FC<LandingAuthViewProps> = ({
   const [identifier, setIdentifier] = useState('');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
+  const [showPassword, setShowPassword] = useState(false);
+
   const [newPassword, setNewPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
+  const [showNewPassword, setShowNewPassword] = useState(false);
+  const [showConfirmPassword, setShowConfirmPassword] = useState(false);
 
   const [loading, setLoading] = useState(false);
   const [verifyingToken, setVerifyingToken] = useState(false);
@@ -242,7 +246,7 @@ export const LandingAuthView: React.FC<LandingAuthViewProps> = ({
     >
       {/* Clean 3-Zone Top Header — Wide Desktop Container */}
       <header className="border-b border-slate-200 dark:border-white/[0.07] bg-white/85 dark:bg-[#07090e]/85 backdrop-blur-md sticky top-0 z-20">
-        <div className="max-w-[1400px] w-full mx-auto flex items-center justify-between gap-8 px-4 sm:px-8 lg:px-12 xl:px-16 py-3.5 sm:py-4">
+        <div className="max-w-[1400px] w-full mx-auto flex items-center justify-between gap-4 sm:gap-8 px-4 sm:px-8 lg:px-12 xl:px-16 py-3.5 sm:py-4">
           <a
             href="#top"
             onClick={(e) => {
@@ -278,7 +282,8 @@ export const LandingAuthView: React.FC<LandingAuthViewProps> = ({
             </a>
           </nav>
 
-          <div className="flex items-center gap-3 shrink-0">
+          <div className="flex items-center gap-2 sm:gap-3 shrink-0">
+            <PWAInstallButton variant="header" />
             <button
               type="button"
               onClick={() => jumpToAuthCard('signin')}
@@ -293,7 +298,7 @@ export const LandingAuthView: React.FC<LandingAuthViewProps> = ({
       {/* Mobile Quick Jump Strip */}
       <div className="md:hidden flex items-center justify-center gap-5 px-4 py-2.5 border-b border-slate-200/80 dark:border-white/[0.06] bg-white/60 dark:bg-[#0b0f17]/60 text-xs font-medium text-slate-600 dark:text-slate-400">
         <a href="#pricing" className="hover:text-cyan-600 dark:hover:text-cyan-400 whitespace-nowrap">
-          $50/mo Pricing
+          $20/mo Pricing
         </a>
         <span aria-hidden="true">·</span>
         <a href="#support" className="hover:text-cyan-600 dark:hover:text-cyan-400 whitespace-nowrap">
@@ -309,27 +314,12 @@ export const LandingAuthView: React.FC<LandingAuthViewProps> = ({
           id="how-it-works"
           className="scroll-mt-20 max-w-[1400px] w-full mx-auto px-4 sm:px-8 lg:px-12 xl:px-16 py-8 sm:py-14 lg:py-20 grid grid-cols-1 lg:grid-cols-12 gap-8 sm:gap-12 xl:gap-16 items-center"
         >
-          {/* Left Column — Plain, Simple Everyday Language */}
+          {/* Left Column — Plain, Simple Everyday Language (Theme option removed for logged-out visitors) */}
           <div className="lg:col-span-7 space-y-5 sm:space-y-6 min-w-0">
             <div className="flex flex-wrap items-center gap-2 sm:gap-3 text-xs font-medium text-cyan-700 dark:text-cyan-400">
               <span>Easy Bulk Email Sender</span>
               <span aria-hidden="true">·</span>
-              <span className="tabular-nums">$50 / month</span>
-              <div className="inline-flex items-center gap-1.5 px-2 py-0.5 h-7 rounded-md border border-slate-200 dark:border-white/10 bg-white dark:bg-[#121722] text-slate-700 dark:text-slate-200">
-                <Palette className="w-3 h-3 text-cyan-500 shrink-0" />
-                <select
-                  aria-label="Select Theme"
-                  value={theme}
-                  onChange={(e) => onSelectTheme(e.target.value as ThemeId)}
-                  className="esp-compact-select bg-transparent text-[11px] focus:outline-none cursor-pointer"
-                >
-                  {THEME_OPTIONS.map((opt) => (
-                    <option key={opt.id} value={opt.id}>
-                      {t('en', opt.labelKey)}
-                    </option>
-                  ))}
-                </select>
-              </div>
+              <span className="tabular-nums">$20 / month</span>
             </div>
 
             <h1 className="font-display font-extrabold tracking-tight leading-[1.08] text-3xl sm:text-5xl xl:text-[4rem] text-balance text-slate-900 dark:text-white">
@@ -365,8 +355,17 @@ export const LandingAuthView: React.FC<LandingAuthViewProps> = ({
           <div className="lg:col-span-5 min-w-0" id="auth-card-anchor">
             <div className="rounded-2xl border border-slate-200 dark:border-white/[0.09] bg-white dark:bg-[#0d1119] p-5 sm:p-8">
               {loggedOutMessage && (
-                <div className="mb-5 px-4 py-3 rounded-lg border border-cyan-500/30 bg-cyan-500/10 text-xs text-cyan-700 dark:text-cyan-300">
-                  {loggedOutMessage}
+                <div className="mb-5 px-3.5 py-2.5 rounded-lg border border-cyan-500/30 bg-cyan-500/10 text-xs text-cyan-700 dark:text-cyan-300 flex items-center justify-between gap-3">
+                  <span className="leading-snug">{loggedOutMessage}</span>
+                  <button
+                    type="button"
+                    aria-label="Cancel logout notification"
+                    onClick={() => onDismissLoggedOutMessage?.()}
+                    className="px-2 py-1 rounded-md border border-cyan-500/30 bg-cyan-500/10 hover:bg-cyan-500/25 text-[11px] font-mono font-semibold inline-flex items-center gap-1 shrink-0 cursor-pointer"
+                  >
+                    <X className="w-3.5 h-3.5" />
+                    <span>Cancel</span>
+                  </button>
                 </div>
               )}
 
@@ -521,15 +520,30 @@ export const LandingAuthView: React.FC<LandingAuthViewProps> = ({
                         >
                           New Password
                         </label>
-                        <input
-                          id="auth-new-password-input"
-                          type="password"
-                          value={newPassword}
-                          onChange={(e) => setNewPassword(e.target.value)}
-                          placeholder="Enter new password (min 4 characters)"
-                          required
-                          className="w-full px-3.5 py-2.5 rounded-lg border border-slate-300 dark:border-white/10 bg-slate-50 dark:bg-[#e8eff7] dark:text-slate-900 text-sm text-slate-900 focus:outline-none focus:ring-2 focus:ring-cyan-500"
-                        />
+                        <div className="relative">
+                          <input
+                            id="auth-new-password-input"
+                            type={showNewPassword ? 'text' : 'password'}
+                            value={newPassword}
+                            onChange={(e) => setNewPassword(e.target.value)}
+                            placeholder="Enter new password (min 4 characters)"
+                            required
+                            className="w-full pl-3.5 pr-11 py-2.5 rounded-lg border border-slate-300 dark:border-white/10 bg-slate-50 dark:bg-[#e8eff7] dark:text-slate-900 text-sm text-slate-900 focus:outline-none focus:ring-2 focus:ring-cyan-500"
+                          />
+                          <button
+                            type="button"
+                            onClick={() => setShowNewPassword((v) => !v)}
+                            aria-label={showNewPassword ? 'Hide password' : 'Show password'}
+                            title={showNewPassword ? 'Hide password' : 'Show password'}
+                            className="absolute right-2 top-1/2 -translate-y-1/2 p-1.5 rounded-md text-slate-500 hover:text-slate-800 cursor-pointer"
+                          >
+                            {showNewPassword ? (
+                              <EyeOff className="w-4 h-4" />
+                            ) : (
+                              <Eye className="w-4 h-4" />
+                            )}
+                          </button>
+                        </div>
                       </div>
 
                       <div>
@@ -539,15 +553,30 @@ export const LandingAuthView: React.FC<LandingAuthViewProps> = ({
                         >
                           Confirm New Password
                         </label>
-                        <input
-                          id="auth-confirm-password-input"
-                          type="password"
-                          value={confirmPassword}
-                          onChange={(e) => setConfirmPassword(e.target.value)}
-                          placeholder="Re-enter new password"
-                          required
-                          className="w-full px-3.5 py-2.5 rounded-lg border border-slate-300 dark:border-white/10 bg-slate-50 dark:bg-[#e8eff7] dark:text-slate-900 text-sm text-slate-900 focus:outline-none focus:ring-2 focus:ring-cyan-500"
-                        />
+                        <div className="relative">
+                          <input
+                            id="auth-confirm-password-input"
+                            type={showConfirmPassword ? 'text' : 'password'}
+                            value={confirmPassword}
+                            onChange={(e) => setConfirmPassword(e.target.value)}
+                            placeholder="Re-enter new password"
+                            required
+                            className="w-full pl-3.5 pr-11 py-2.5 rounded-lg border border-slate-300 dark:border-white/10 bg-slate-50 dark:bg-[#e8eff7] dark:text-slate-900 text-sm text-slate-900 focus:outline-none focus:ring-2 focus:ring-cyan-500"
+                          />
+                          <button
+                            type="button"
+                            onClick={() => setShowConfirmPassword((v) => !v)}
+                            aria-label={showConfirmPassword ? 'Hide password' : 'Show password'}
+                            title={showConfirmPassword ? 'Hide password' : 'Show password'}
+                            className="absolute right-2 top-1/2 -translate-y-1/2 p-1.5 rounded-md text-slate-500 hover:text-slate-800 cursor-pointer"
+                          >
+                            {showConfirmPassword ? (
+                              <EyeOff className="w-4 h-4" />
+                            ) : (
+                              <Eye className="w-4 h-4" />
+                            )}
+                          </button>
+                        </div>
                       </div>
 
                       <button
@@ -647,20 +676,35 @@ export const LandingAuthView: React.FC<LandingAuthViewProps> = ({
                         </button>
                       )}
                     </div>
-                    <input
-                      id="auth-password-input"
-                      type="password"
-                      value={password}
-                      onChange={(e) => setPassword(e.target.value)}
-                      placeholder="••••••••••••"
-                      required
-                      className="w-full px-3.5 py-2.5 rounded-lg border border-slate-300 dark:border-white/10 bg-slate-50 dark:bg-[#e8eff7] dark:text-slate-900 text-sm text-slate-900 focus:outline-none focus:ring-2 focus:ring-cyan-500"
-                    />
+                    <div className="relative">
+                      <input
+                        id="auth-password-input"
+                        type={showPassword ? 'text' : 'password'}
+                        value={password}
+                        onChange={(e) => setPassword(e.target.value)}
+                        placeholder="••••••••••••"
+                        required
+                        className="w-full pl-3.5 pr-11 py-2.5 rounded-lg border border-slate-300 dark:border-white/10 bg-slate-50 dark:bg-[#e8eff7] dark:text-slate-900 text-sm text-slate-900 focus:outline-none focus:ring-2 focus:ring-cyan-500"
+                      />
+                      <button
+                        type="button"
+                        onClick={() => setShowPassword((v) => !v)}
+                        aria-label={showPassword ? 'Hide password' : 'Show password'}
+                        title={showPassword ? 'Hide password' : 'Show password'}
+                        className="absolute right-2 top-1/2 -translate-y-1/2 p-1.5 rounded-md text-slate-500 hover:text-slate-800 cursor-pointer"
+                      >
+                        {showPassword ? (
+                          <EyeOff className="w-4 h-4" />
+                        ) : (
+                          <Eye className="w-4 h-4" />
+                        )}
+                      </button>
+                    </div>
                   </div>
 
                   {authTab === 'register' && (
                     <p className="text-xs text-cyan-700 dark:text-cyan-300 bg-cyan-500/10 border border-cyan-500/25 rounded-lg px-3 py-2 leading-relaxed">
-                      Sign up for free to explore the dashboard first. Activate the $50/month plan
+                      Sign up for free to explore the dashboard first. Activate the $20/month plan
                       anytime when you&apos;re ready to send emails.
                     </p>
                   )}
@@ -686,7 +730,7 @@ export const LandingAuthView: React.FC<LandingAuthViewProps> = ({
         </section>
 
         {/* =====================================================================
-            SIMPLE PRICING SECTION ($50 / MONTH — EASY TO UNDERSTAND)
+            SIMPLE PRICING SECTION ($20 / MONTH — EASY TO UNDERSTAND)
             ===================================================================== */}
         <section
           id="pricing"
@@ -695,7 +739,7 @@ export const LandingAuthView: React.FC<LandingAuthViewProps> = ({
           <div className="max-w-[1400px] w-full mx-auto px-4 sm:px-8 lg:px-12 xl:px-16 py-14 sm:py-20 space-y-10">
             <div className="max-w-2xl space-y-2">
               <h2 className="font-display font-extrabold tracking-tight text-2xl sm:text-4xl text-slate-900 dark:text-white">
-                Simple Pricing — $50 / Month
+                Simple Pricing — $20 / Month
               </h2>
               <p className="text-sm sm:text-base text-slate-600 dark:text-slate-400 leading-relaxed">
                 Try the dashboard for free first. Pay one simple monthly price when you are ready
@@ -748,7 +792,7 @@ export const LandingAuthView: React.FC<LandingAuthViewProps> = ({
                 </button>
               </div>
 
-              {/* $50 / Month Full Access Card */}
+              {/* $20 / Month Full Access Card */}
               <div className="rounded-2xl border border-cyan-500/40 dark:border-cyan-400/35 bg-white dark:bg-[#0d1119] p-6 sm:p-8 flex flex-col justify-between gap-8">
                 <div className="space-y-5">
                   <div className="flex items-baseline justify-between gap-4">
@@ -762,7 +806,7 @@ export const LandingAuthView: React.FC<LandingAuthViewProps> = ({
                     </div>
                     <div className="text-right shrink-0">
                       <span className="text-3xl sm:text-5xl font-display font-extrabold text-cyan-600 dark:text-cyan-400 tabular-nums">
-                        $50
+                        $20
                       </span>
                       <span className="text-xs text-slate-500 dark:text-slate-400 block">
                         per month
@@ -792,7 +836,7 @@ export const LandingAuthView: React.FC<LandingAuthViewProps> = ({
                   onClick={() => jumpToAuthCard('register')}
                   className="w-full min-h-[46px] py-3 px-6 rounded-xl bg-gradient-to-r from-cyan-400 via-sky-400 to-indigo-400 text-slate-950 font-display font-extrabold text-sm hover:opacity-95 transition-opacity inline-flex items-center justify-center gap-2 whitespace-nowrap cursor-pointer"
                 >
-                  <span>Get Started — $50/month</span>
+                  <span>Get Started — $20/month</span>
                   <ArrowRight className="w-4 h-4" />
                 </button>
               </div>
@@ -815,7 +859,7 @@ export const LandingAuthView: React.FC<LandingAuthViewProps> = ({
                 </h2>
                 <p className="text-sm sm:text-base text-slate-600 dark:text-slate-400 leading-relaxed">
                   Have a question about setting up your account, connecting your email, or
-                  activating your $50/month plan? Message us directly on Telegram and we&apos;ll
+                  activating your $20/month plan? Message us directly on Telegram and we&apos;ll
                   help you right away.
                 </p>
               </div>
@@ -851,7 +895,7 @@ export const LandingAuthView: React.FC<LandingAuthViewProps> = ({
               href="#pricing"
               className="hover:text-slate-900 dark:hover:text-white transition-colors whitespace-nowrap"
             >
-              Pricing ($50/mo)
+              Pricing ($20/mo)
             </a>
             <a
               href="https://t.me/paraxait"

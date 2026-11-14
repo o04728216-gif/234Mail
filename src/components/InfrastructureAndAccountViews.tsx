@@ -842,7 +842,7 @@ export const AccountAndSubscriptionView: React.FC<AccountAndSubscriptionProps> =
   const { platformSettings, user } = snapshot;
   const walletAddress =
     platformSettings?.usdtWalletAddress || 'TEuJWuY2b6a5ixmz7nbKaM4V3gYNNUU6ed';
-  const monthlyPrice = platformSettings?.monthlyPriceUsd || 50;
+  const monthlyPrice = platformSettings?.monthlyPriceUsd || 20;
   const durationDays = platformSettings?.planDurationDays || 30;
   const networkLabel = platformSettings?.paymentNetwork || 'TRC20 Network Only';
 

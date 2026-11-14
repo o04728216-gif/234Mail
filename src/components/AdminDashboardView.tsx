@@ -2,6 +2,8 @@ import React, { useEffect, useMemo, useState } from 'react';
 import {
   ArrowRight,
   Check,
+  Eye,
+  EyeOff,
   KeyRound,
   Mail,
   Plus,
@@ -24,6 +26,7 @@ import type {
   UserRole,
 } from '../types';
 import { apiRequest } from '../utils/api';
+import { PWAInstallButton } from './PWAInstallButton';
 
 const HOURLY_STEPS: HourlyRateStep[] = [50, 100, 200, 300, 400, 500, 1000];
 
@@ -150,7 +153,7 @@ export const AdminDashboardView: React.FC<AdminDashboardViewProps> = ({
   const [busyUserId, setBusyUserId] = useState<string | null>(null);
   const [banner, setBanner] = useState<{ ok: boolean; text: string } | null>(null);
 
-  const planPrice = Math.max(1, snapshot.platformSettings.monthlyPriceUsd || 50);
+  const planPrice = Math.max(1, snapshot.platformSettings.monthlyPriceUsd || 20);
   const planDays = Math.max(1, snapshot.platformSettings.planDurationDays || 30);
 
   const getEffectiveActiveTimes = (u: UserProfile): number => {
@@ -414,7 +417,7 @@ export const AdminDashboardView: React.FC<AdminDashboardViewProps> = ({
         {
           method: 'PUT',
           body: JSON.stringify({
-            monthlyPriceUsd: Number(priceUsd) || 50,
+            monthlyPriceUsd: Number(priceUsd) || 20,
             planDurationDays: Number(durationDays) || 30,
             usdtWalletAddress: walletAddr.trim(),
             paymentNetwork: networkNote.trim(),
@@ -1716,8 +1719,11 @@ export const AdminLoginView: React.FC<AdminLoginViewProps> = ({
   );
   const [identifier, setIdentifier] = useState('');
   const [password, setPassword] = useState('');
+  const [showPassword, setShowPassword] = useState(false);
   const [newPassword, setNewPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
+  const [showNewPassword, setShowNewPassword] = useState(false);
+  const [showConfirmPassword, setShowConfirmPassword] = useState(false);
   const [loading, setLoading] = useState(false);
   const [verifyingToken, setVerifyingToken] = useState(false);
   const [verifiedAccount, setVerifiedAccount] = useState<{
@@ -1894,10 +1900,13 @@ export const AdminLoginView: React.FC<AdminLoginViewProps> = ({
           <span className="text-cyan-600 dark:text-cyan-400">Mail</span>
         </a>
 
-        <span className="px-3 py-1 rounded-full border border-rose-500/35 bg-rose-500/10 text-xs font-mono font-semibold text-rose-600 dark:text-rose-400 inline-flex items-center gap-1.5">
-          <Settings className="w-3.5 h-3.5" />
-          <span>/admin</span>
-        </span>
+        <div className="flex items-center gap-2">
+          <PWAInstallButton variant="header" />
+          <span className="px-3 py-1 rounded-full border border-rose-500/35 bg-rose-500/10 text-xs font-mono font-semibold text-rose-600 dark:text-rose-400 inline-flex items-center gap-1.5">
+            <Settings className="w-3.5 h-3.5" />
+            <span>/admin</span>
+          </span>
+        </div>
       </header>
 
       <main className="flex-1 flex items-center justify-center p-4 sm:p-6">
@@ -1996,28 +2005,58 @@ export const AdminLoginView: React.FC<AdminLoginViewProps> = ({
                     <label className="block text-xs font-mono text-slate-500 dark:text-slate-400 mb-1.5">
                       New Password
                     </label>
-                    <input
-                      type="password"
-                      required
-                      value={newPassword}
-                      onChange={(e) => setNewPassword(e.target.value)}
-                      placeholder="Min 4 characters"
-                      className="w-full px-3.5 py-2.5 rounded-lg border border-slate-300 dark:border-white/10 bg-slate-50 dark:bg-[#131822] text-sm font-mono text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-cyan-500"
-                    />
+                    <div className="relative">
+                      <input
+                        type={showNewPassword ? 'text' : 'password'}
+                        required
+                        value={newPassword}
+                        onChange={(e) => setNewPassword(e.target.value)}
+                        placeholder="Min 4 characters"
+                        className="w-full pl-3.5 pr-11 py-2.5 rounded-lg border border-slate-300 dark:border-white/10 bg-slate-50 dark:bg-[#131822] text-sm font-mono text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-cyan-500"
+                      />
+                      <button
+                        type="button"
+                        onClick={() => setShowNewPassword((v) => !v)}
+                        aria-label={showNewPassword ? 'Hide password' : 'Show password'}
+                        title={showNewPassword ? 'Hide password' : 'Show password'}
+                        className="absolute right-2 top-1/2 -translate-y-1/2 p-1.5 rounded-md text-slate-500 hover:text-slate-800 dark:hover:text-slate-200 cursor-pointer"
+                      >
+                        {showNewPassword ? (
+                          <EyeOff className="w-4 h-4" />
+                        ) : (
+                          <Eye className="w-4 h-4" />
+                        )}
+                      </button>
+                    </div>
                   </div>
 
                   <div>
                     <label className="block text-xs font-mono text-slate-500 dark:text-slate-400 mb-1.5">
                       Confirm New Password
                     </label>
-                    <input
-                      type="password"
-                      required
-                      value={confirmPassword}
-                      onChange={(e) => setConfirmPassword(e.target.value)}
-                      placeholder="Re-enter new password"
-                      className="w-full px-3.5 py-2.5 rounded-lg border border-slate-300 dark:border-white/10 bg-slate-50 dark:bg-[#131822] text-sm font-mono text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-cyan-500"
-                    />
+                    <div className="relative">
+                      <input
+                        type={showConfirmPassword ? 'text' : 'password'}
+                        required
+                        value={confirmPassword}
+                        onChange={(e) => setConfirmPassword(e.target.value)}
+                        placeholder="Re-enter new password"
+                        className="w-full pl-3.5 pr-11 py-2.5 rounded-lg border border-slate-300 dark:border-white/10 bg-slate-50 dark:bg-[#131822] text-sm font-mono text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-cyan-500"
+                      />
+                      <button
+                        type="button"
+                        onClick={() => setShowConfirmPassword((v) => !v)}
+                        aria-label={showConfirmPassword ? 'Hide password' : 'Show password'}
+                        title={showConfirmPassword ? 'Hide password' : 'Show password'}
+                        className="absolute right-2 top-1/2 -translate-y-1/2 p-1.5 rounded-md text-slate-500 hover:text-slate-800 dark:hover:text-slate-200 cursor-pointer"
+                      >
+                        {showConfirmPassword ? (
+                          <EyeOff className="w-4 h-4" />
+                        ) : (
+                          <Eye className="w-4 h-4" />
+                        )}
+                      </button>
+                    </div>
                   </div>
 
                   <button
@@ -2089,14 +2128,29 @@ export const AdminLoginView: React.FC<AdminLoginViewProps> = ({
                       Forgot Password?
                     </button>
                   </div>
-                  <input
-                    type="password"
-                    required
-                    value={password}
-                    onChange={(e) => setPassword(e.target.value)}
-                    placeholder="••••••••••••"
-                    className="w-full px-3.5 py-2.5 rounded-lg border border-slate-300 dark:border-white/10 bg-slate-50 dark:bg-[#131822] text-sm font-mono text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-cyan-500"
-                  />
+                  <div className="relative">
+                    <input
+                      type={showPassword ? 'text' : 'password'}
+                      required
+                      value={password}
+                      onChange={(e) => setPassword(e.target.value)}
+                      placeholder="••••••••••••"
+                      className="w-full pl-3.5 pr-11 py-2.5 rounded-lg border border-slate-300 dark:border-white/10 bg-slate-50 dark:bg-[#131822] text-sm font-mono text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-cyan-500"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => setShowPassword((v) => !v)}
+                      aria-label={showPassword ? 'Hide password' : 'Show password'}
+                      title={showPassword ? 'Hide password' : 'Show password'}
+                      className="absolute right-2 top-1/2 -translate-y-1/2 p-1.5 rounded-md text-slate-500 hover:text-slate-800 dark:hover:text-slate-200 cursor-pointer"
+                    >
+                      {showPassword ? (
+                        <EyeOff className="w-4 h-4" />
+                      ) : (
+                        <Eye className="w-4 h-4" />
+                      )}
+                    </button>
+                  </div>
                 </div>
               )}
 

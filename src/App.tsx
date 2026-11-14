@@ -29,6 +29,7 @@ import {
   TrackingView,
 } from './components/MailboxAndTrackingViews';
 import { OverviewView } from './components/OverviewAndAnalytics';
+import { PWAInstallButton } from './components/PWAInstallButton';
 import { LANGUAGE_LABELS, THEME_OPTIONS, t } from './i18n';
 import type {
   AdminResetSmtpConfig,
@@ -174,12 +175,16 @@ export default function App() {
   }, [resetTokenParam]);
 
   useEffect(() => {
-    const isDarkSurface = theme !== 'light';
+    const isLoggedIn = Boolean(token && snapshot && !resetTokenParam);
+    const effectiveTheme: ThemeId = isLoggedIn ? theme : 'dark';
+    const isDarkSurface = effectiveTheme !== 'light';
     document.documentElement.classList.toggle('dark', isDarkSurface);
-    document.documentElement.setAttribute('data-theme', theme);
-    localStorage.setItem(STORAGE_THEME_KEY, theme);
-    localStorage.setItem(STORAGE_LEGACY_DARK_KEY, String(isDarkSurface));
-  }, [theme]);
+    document.documentElement.setAttribute('data-theme', effectiveTheme);
+    if (isLoggedIn) {
+      localStorage.setItem(STORAGE_THEME_KEY, theme);
+      localStorage.setItem(STORAGE_LEGACY_DARK_KEY, String(isDarkSurface));
+    }
+  }, [theme, token, snapshot, resetTokenParam]);
 
   useEffect(() => {
     localStorage.setItem(STORAGE_LANG_KEY, lang);
@@ -583,6 +588,7 @@ export default function App() {
           </div>
 
           <div className="flex items-center gap-1.5 sm:gap-2 text-xs font-mono shrink-0">
+            <PWAInstallButton variant="header" />
             <select
               aria-label="Admin Theme"
               value={theme}
@@ -659,9 +665,8 @@ export default function App() {
   if (resetTokenParam || !token || !snapshot) {
     return (
       <LandingAuthView
-        theme={theme}
-        onSelectTheme={handleSelectTheme}
         loggedOutMessage={loggedOutMessage}
+        onDismissLoggedOutMessage={() => setLoggedOutMessage(null)}
         resetToken={resetTokenParam}
         onClearResetToken={clearResetTokenParam}
         onNavigateUrl={navigateTo}
@@ -707,6 +712,7 @@ export default function App() {
           </div>
 
           <div className="flex items-center gap-1.5 sm:gap-2 text-xs font-mono shrink-0">
+            <PWAInstallButton variant="header" />
             <select
               aria-label="Theme"
               value={theme}
@@ -869,8 +875,9 @@ export default function App() {
         ))}
       </div>
 
-      {/* Pinned Bottom Controls: Compact Side-by-Side Theme & Language on Both Mobile & PC, Followed by Logout */}
+      {/* Pinned Bottom Controls: Install to Dock, Compact Side-by-Side Theme & Language, Followed by Logout */}
       <div className="shrink-0 pt-2.5 mt-2.5 border-t border-slate-200 dark:border-white/[0.07] space-y-2">
+        <PWAInstallButton variant="sidebar" />
         <div className="grid grid-cols-2 gap-1.5">
           <div className="min-w-0">
             <label
@@ -957,6 +964,7 @@ export default function App() {
         </div>
 
         <div className="flex items-center gap-2 sm:gap-3 text-xs font-mono shrink-0">
+          <PWAInstallButton variant="header" />
           {isPaidAndActive ? (
             <button
               type="button"

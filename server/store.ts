@@ -80,7 +80,7 @@ export interface PersistentState {
   telemetryHistory: TelemetryPoint[];
 }
 
-const CURRENT_SCHEMA_VERSION = 6;
+const CURRENT_SCHEMA_VERSION = 7;
 export const SEED_OWNER_ID = 'usr_geekytycoon';
 const SEED_DEMO_SMTP_IDS = new Set(['smtp_demo', 'smtp_ae6abe75']);
 const SEED_DEMO_SMTP_HOSTS = new Set(['whyistay.org', 'cytyrealestate.com']);
@@ -144,7 +144,7 @@ export const DEFAULT_USER_OPTIONS: UserOptions = {
 };
 
 export const DEFAULT_PLATFORM_SETTINGS: PlatformSettings = {
-  monthlyPriceUsd: 50,
+  monthlyPriceUsd: 20,
   planDurationDays: 30,
   usdtWalletAddress: 'TEuJWuY2b6a5ixmz7nbKaM4V3gYNNUU6ed',
   paymentNetwork: 'TRC20 Network Only',
@@ -237,7 +237,7 @@ export function syncUserActiveRevenue(
   ps: PlatformSettings
 ): void {
   const planDays = Math.max(1, ps.planDurationDays || 30);
-  const price = Math.max(1, ps.monthlyPriceUsd || 50);
+  const price = Math.max(1, ps.monthlyPriceUsd || 20);
 
   // Free Trial / Pending / Suspended users have 0 paid periods until they pay or Admin activates them
   if (
@@ -283,7 +283,7 @@ function buildSeedUsers(): StoredUser[] {
       username: params.username,
       email: params.email,
       role: params.role || 'manager',
-      planName: 'Monthly — $50 USDT',
+      planName: 'Monthly — $20 USDT',
       subscriptionStatus: params.status,
       expiresAt: params.expiresAt,
       daysLeft: params.daysLeft,
@@ -318,7 +318,7 @@ function buildSeedUsers(): StoredUser[] {
       daysLeft: 26,
       joinedAt: '2026-03-17',
       paymentsCount: 1,
-      totalPaidUsd: 50,
+      totalPaidUsd: 20,
       campaignsCount: 0,
     }),
     mkUser({
@@ -344,7 +344,7 @@ function buildSeedUsers(): StoredUser[] {
       daysLeft: 26,
       joinedAt: '2026-10-08',
       paymentsCount: 1,
-      totalPaidUsd: 50,
+      totalPaidUsd: 20,
       campaignsCount: 6,
     }),
     mkUser({
@@ -357,7 +357,7 @@ function buildSeedUsers(): StoredUser[] {
       daysLeft: 26,
       joinedAt: '2026-10-08',
       paymentsCount: 1,
-      totalPaidUsd: 50,
+      totalPaidUsd: 20,
       campaignsCount: 11,
     }),
     mkUser({
@@ -809,6 +809,12 @@ function migrateLoadedState(parsed: Partial<PersistentState>): PersistentState {
     platformSettings.newUserTrialDays = 7;
   }
 
+  if (!parsed.schemaVersion || parsed.schemaVersion < 7) {
+    if (!platformSettings.monthlyPriceUsd || platformSettings.monthlyPriceUsd === 50) {
+      platformSettings.monthlyPriceUsd = 20;
+    }
+  }
+
   let users: StoredUser[];
   if (wasVeryOldSchema || !Array.isArray(parsed.users) || parsed.users.length === 0) {
     const seededUsers = buildSeedUsers();
@@ -887,6 +893,9 @@ function migrateLoadedState(parsed: Partial<PersistentState>): PersistentState {
   }
 
   for (const u of users) {
+    if ((!parsed.schemaVersion || parsed.schemaVersion < 7) && u.planName?.includes('$50')) {
+      u.planName = `Monthly — $${platformSettings.monthlyPriceUsd} USDT`;
+    }
     syncUserActiveRevenue(u, platformSettings);
   }
 
@@ -1181,7 +1190,7 @@ class DataStore {
       joinedAt: nowStr.slice(0, 10),
       lastLoginAt: nowStr,
       paymentsCount: initialPayments,
-      totalPaidUsd: initialPayments * Math.max(1, ps.monthlyPriceUsd || 50),
+      totalPaidUsd: initialPayments * Math.max(1, ps.monthlyPriceUsd || 20),
       campaignsCount: 0,
       options: { ...DEFAULT_USER_OPTIONS },
       salt,
