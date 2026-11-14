@@ -5,7 +5,7 @@ import './index.css';
 
 registerSW({ immediate: true });
 
-// Prevent Safari / WebKit smart-zoom & gesture page zoom on click/tap across Mobile & PC
+// Ensure all browsers (Chrome, Safari, Firefox, Edge, Brave) render the crisp Apple 🚀 favicon
 if (typeof document !== 'undefined') {
   const preventGestureZoom = (e: Event) => {
     e.preventDefault();
@@ -13,6 +13,11 @@ if (typeof document !== 'undefined') {
   document.addEventListener('gesturestart', preventGestureZoom, { passive: false });
   document.addEventListener('gesturechange', preventGestureZoom, { passive: false });
   document.addEventListener('gestureend', preventGestureZoom, { passive: false });
+
+  // Remove any stale SVG icon links that could shadow raster Apple emoji favicons
+  document
+    .querySelectorAll('link[rel*="icon"][type="image/svg+xml"]')
+    .forEach((el) => el.parentNode?.removeChild(el));
 }
 
 createRoot(document.getElementById('root')!).render(<App />);

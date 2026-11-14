@@ -14,8 +14,9 @@ export default defineConfig(() => {
         includeAssets: [
           'favicon.ico',
           'favicon.png',
+          'favicon-16x16.png',
           'favicon-32x32.png',
-          'favicon.svg',
+          'favicon-48x48.png',
           'apple-touch-icon.png',
           'pwa-192x192.png',
           'pwa-512x512.png',
@@ -34,19 +35,19 @@ export default defineConfig(() => {
           scope: '/',
           icons: [
             {
-              src: '/pwa-192x192.png?v=apple2',
+              src: '/pwa-192x192.png?v=apple4',
               sizes: '192x192',
               type: 'image/png',
               purpose: 'any',
             },
             {
-              src: '/pwa-512x512.png?v=apple2',
+              src: '/pwa-512x512.png?v=apple4',
               sizes: '512x512',
               type: 'image/png',
               purpose: 'any',
             },
             {
-              src: '/pwa-maskable-512x512.png?v=apple2',
+              src: '/pwa-maskable-512x512.png?v=apple4',
               sizes: '512x512',
               type: 'image/png',
               purpose: 'maskable',

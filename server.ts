@@ -2054,6 +2054,30 @@ async function bootstrap() {
   });
 
   // ============================================================================
+  // EXPLICIT CROSS-BROWSER FAVICON ROUTES (Safari, Chrome, Firefox, Edge, Brave)
+  // ============================================================================
+  const faviconFiles: Record<string, { file: string; type: string }> = {
+    '/favicon.ico': { file: 'favicon.ico', type: 'image/x-icon' },
+    '/favicon.png': { file: 'favicon.png', type: 'image/png' },
+    '/favicon-16x16.png': { file: 'favicon-16x16.png', type: 'image/png' },
+    '/favicon-32x32.png': { file: 'favicon-32x32.png', type: 'image/png' },
+    '/favicon-48x48.png': { file: 'favicon-48x48.png', type: 'image/png' },
+    '/apple-touch-icon.png': { file: 'apple-touch-icon.png', type: 'image/png' },
+  };
+  for (const [routePath, meta] of Object.entries(faviconFiles)) {
+    app.get(routePath, (_req: Request, res: Response) => {
+      const baseDir =
+        process.env.NODE_ENV === 'production'
+          ? path.resolve(process.cwd(), 'dist')
+          : path.resolve(process.cwd(), 'public');
+      const fullPath = path.join(baseDir, meta.file);
+      res.setHeader('Content-Type', meta.type);
+      res.setHeader('Cache-Control', 'public, max-age=3600');
+      res.sendFile(fullPath);
+    });
+  }
+
+  // ============================================================================
   // VITE DEV MIDDLEWARE OR PRODUCTION STATIC ASSETS
   // ============================================================================
   if (process.env.NODE_ENV !== 'production') {

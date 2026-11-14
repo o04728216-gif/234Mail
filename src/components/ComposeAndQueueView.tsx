@@ -1182,7 +1182,10 @@ export const ComposeEmailView: React.FC<ComposeEmailViewProps> = ({
     !htmlBody.trim() || htmlBody.trim() === '<p><br></p>' || htmlBody.trim() === '<br>';
 
   return (
-    <form onSubmit={handleSend} className="w-full max-w-6xl xl:max-w-7xl mx-auto space-y-5 sm:space-y-6">
+    <form
+      onSubmit={handleSend}
+      className="esp-compose-form w-full max-w-6xl xl:max-w-7xl mx-auto space-y-5 sm:space-y-6"
+    >
       {/* Page Title & 1-Click Clear Form */}
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
@@ -1774,7 +1777,7 @@ export const ComposeEmailView: React.FC<ComposeEmailViewProps> = ({
                     {/* Visual Compose Surface */}
                     <div className="relative min-h-[240px]">
                       {isVisualEmpty && (
-                        <div className="pointer-events-none absolute top-3.5 left-4 text-xs font-mono italic text-slate-400 dark:text-slate-500">
+                        <div className="pointer-events-none absolute top-3.5 left-4 text-[11.5px] font-mono italic text-slate-400 dark:text-slate-500">
                           Compose HTML email... Use {'{first_name}'} to personalize.
                         </div>
                       )}

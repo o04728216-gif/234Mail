@@ -283,7 +283,7 @@ export const LandingAuthView: React.FC<LandingAuthViewProps> = ({
           </nav>
 
           <div className="flex items-center gap-2 sm:gap-3 shrink-0">
-            <PWAInstallButton variant="header" />
+            <PWAInstallButton />
             <button
               type="button"
               onClick={() => jumpToAuthCard('signin')}
@@ -359,12 +359,11 @@ export const LandingAuthView: React.FC<LandingAuthViewProps> = ({
                   <span className="leading-snug">{loggedOutMessage}</span>
                   <button
                     type="button"
-                    aria-label="Cancel logout notification"
+                    aria-label="Dismiss logout notification"
                     onClick={() => onDismissLoggedOutMessage?.()}
-                    className="px-2 py-1 rounded-md border border-cyan-500/30 bg-cyan-500/10 hover:bg-cyan-500/25 text-[11px] font-mono font-semibold inline-flex items-center gap-1 shrink-0 cursor-pointer"
+                    className="p-1 rounded-md text-cyan-700 dark:text-cyan-300 hover:bg-cyan-500/20 inline-flex items-center justify-center shrink-0 transition-colors cursor-pointer"
                   >
-                    <X className="w-3.5 h-3.5" />
-                    <span>Cancel</span>
+                    <X className="w-4 h-4" />
                   </button>
                 </div>
               )}

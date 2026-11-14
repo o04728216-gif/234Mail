@@ -588,7 +588,7 @@ export default function App() {
           </div>
 
           <div className="flex items-center gap-1.5 sm:gap-2 text-xs font-mono shrink-0">
-            <PWAInstallButton variant="header" />
+            <PWAInstallButton />
             <select
               aria-label="Admin Theme"
               value={theme}
@@ -712,7 +712,7 @@ export default function App() {
           </div>
 
           <div className="flex items-center gap-1.5 sm:gap-2 text-xs font-mono shrink-0">
-            <PWAInstallButton variant="header" />
+            <PWAInstallButton />
             <select
               aria-label="Theme"
               value={theme}
@@ -875,9 +875,8 @@ export default function App() {
         ))}
       </div>
 
-      {/* Pinned Bottom Controls: Install to Dock, Compact Side-by-Side Theme & Language, Followed by Logout */}
+      {/* Pinned Bottom Controls: Compact Side-by-Side Theme & Language, Followed by Logout */}
       <div className="shrink-0 pt-2.5 mt-2.5 border-t border-slate-200 dark:border-white/[0.07] space-y-2">
-        <PWAInstallButton variant="sidebar" />
         <div className="grid grid-cols-2 gap-1.5">
           <div className="min-w-0">
             <label
@@ -964,7 +963,7 @@ export default function App() {
         </div>
 
         <div className="flex items-center gap-2 sm:gap-3 text-xs font-mono shrink-0">
-          <PWAInstallButton variant="header" />
+          <PWAInstallButton />
           {isPaidAndActive ? (
             <button
               type="button"

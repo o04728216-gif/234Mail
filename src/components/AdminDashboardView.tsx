@@ -1901,7 +1901,7 @@ export const AdminLoginView: React.FC<AdminLoginViewProps> = ({
         </a>
 
         <div className="flex items-center gap-2">
-          <PWAInstallButton variant="header" />
+          <PWAInstallButton />
           <span className="px-3 py-1 rounded-full border border-rose-500/35 bg-rose-500/10 text-xs font-mono font-semibold text-rose-600 dark:text-rose-400 inline-flex items-center gap-1.5">
             <Settings className="w-3.5 h-3.5" />
             <span>/admin</span>
