@@ -582,16 +582,28 @@ export default function App() {
             </a>
           </div>
 
-          <div className="flex items-center gap-1.5 sm:gap-2.5 text-xs font-mono shrink-0">
+          <div className="flex items-center gap-1.5 sm:gap-2 text-xs font-mono shrink-0">
             <select
               aria-label="Admin Theme"
               value={theme}
               onChange={(e) => handleSelectTheme(e.target.value as ThemeId)}
-              className="max-w-[104px] sm:max-w-none px-2 sm:px-2.5 py-1.5 min-h-[38px] rounded-lg border border-slate-200 dark:border-white/10 bg-white dark:bg-[#121722] text-xs font-mono text-slate-700 dark:text-slate-200 cursor-pointer"
+              className="esp-compact-select h-7 w-[92px] sm:w-[112px] px-1.5 py-0.5 rounded-md border border-slate-200 dark:border-white/10 bg-white dark:bg-[#121722] text-[11px] font-mono text-slate-700 dark:text-slate-200 truncate cursor-pointer"
             >
               {THEME_OPTIONS.map((opt) => (
                 <option key={opt.id} value={opt.id}>
                   {t(lang, opt.labelKey)}
+                </option>
+              ))}
+            </select>
+            <select
+              aria-label="Admin Language"
+              value={lang}
+              onChange={(e) => handleSelectLanguage(e.target.value as LanguageCode)}
+              className="esp-compact-select h-7 w-[78px] sm:w-[92px] px-1.5 py-0.5 rounded-md border border-slate-200 dark:border-white/10 bg-white dark:bg-[#121722] text-[11px] font-mono text-slate-700 dark:text-slate-200 truncate cursor-pointer"
+            >
+              {(Object.keys(LANGUAGE_LABELS) as LanguageCode[]).map((code) => (
+                <option key={code} value={code}>
+                  {LANGUAGE_LABELS[code]}
                 </option>
               ))}
             </select>
@@ -694,16 +706,28 @@ export default function App() {
             <span className="text-cyan-600 dark:text-cyan-400">Mail</span>
           </div>
 
-          <div className="flex items-center gap-1.5 sm:gap-2.5 text-xs font-mono shrink-0">
+          <div className="flex items-center gap-1.5 sm:gap-2 text-xs font-mono shrink-0">
             <select
               aria-label="Theme"
               value={theme}
               onChange={(e) => handleSelectTheme(e.target.value as ThemeId)}
-              className="max-w-[104px] sm:max-w-none px-2 sm:px-2.5 py-1.5 min-h-[38px] rounded-lg border border-slate-200 dark:border-white/10 bg-white dark:bg-[#121722] text-xs font-mono text-slate-700 dark:text-slate-200 cursor-pointer"
+              className="esp-compact-select h-7 w-[92px] sm:w-[112px] px-1.5 py-0.5 rounded-md border border-slate-200 dark:border-white/10 bg-white dark:bg-[#121722] text-[11px] font-mono text-slate-700 dark:text-slate-200 truncate cursor-pointer"
             >
               {THEME_OPTIONS.map((opt) => (
                 <option key={opt.id} value={opt.id}>
                   {t(lang, opt.labelKey)}
+                </option>
+              ))}
+            </select>
+            <select
+              aria-label="Language"
+              value={lang}
+              onChange={(e) => handleSelectLanguage(e.target.value as LanguageCode)}
+              className="esp-compact-select h-7 w-[78px] sm:w-[92px] px-1.5 py-0.5 rounded-md border border-slate-200 dark:border-white/10 bg-white dark:bg-[#121722] text-[11px] font-mono text-slate-700 dark:text-slate-200 truncate cursor-pointer"
+            >
+              {(Object.keys(LANGUAGE_LABELS) as LanguageCode[]).map((code) => (
+                <option key={code} value={code}>
+                  {LANGUAGE_LABELS[code]}
                 </option>
               ))}
             </select>
@@ -845,57 +869,59 @@ export default function App() {
         ))}
       </div>
 
-      {/* Pinned Bottom Controls: Theme Stacked on Top of Language, Followed by Logout */}
-      <div className="shrink-0 pt-3 mt-3 border-t border-slate-200 dark:border-white/[0.07] space-y-2.5">
-        <div>
-          <label
-            htmlFor="sidebar-theme-select"
-            className="flex items-center justify-between text-[10px] font-mono uppercase tracking-wider text-slate-400 mb-1"
-          >
-            <span>Theme</span>
-            <span className="w-2.5 h-2.5 rounded-full bg-cyan-500 border border-slate-300 dark:border-white/20" />
-          </label>
-          <select
-            id="sidebar-theme-select"
-            value={theme}
-            onChange={(e) => handleSelectTheme(e.target.value as ThemeId)}
-            className="w-full px-2.5 py-2 rounded-lg border border-slate-200 dark:border-white/10 bg-slate-50 dark:bg-[#121722] text-xs font-mono text-slate-800 dark:text-slate-200 cursor-pointer"
-          >
-            {THEME_OPTIONS.map((opt) => (
-              <option key={opt.id} value={opt.id}>
-                {t(lang, opt.labelKey)}
-              </option>
-            ))}
-          </select>
-        </div>
+      {/* Pinned Bottom Controls: Compact Side-by-Side Theme & Language on Both Mobile & PC, Followed by Logout */}
+      <div className="shrink-0 pt-2.5 mt-2.5 border-t border-slate-200 dark:border-white/[0.07] space-y-2">
+        <div className="grid grid-cols-2 gap-1.5">
+          <div className="min-w-0">
+            <label
+              htmlFor="sidebar-theme-select"
+              className="flex items-center justify-between text-[9px] font-mono uppercase tracking-wider text-slate-400 mb-0.5 px-0.5"
+            >
+              <span className="truncate">Theme</span>
+              <span className="w-2 h-2 rounded-full bg-cyan-500 border border-slate-300 dark:border-white/20 shrink-0" />
+            </label>
+            <select
+              id="sidebar-theme-select"
+              value={theme}
+              onChange={(e) => handleSelectTheme(e.target.value as ThemeId)}
+              className="esp-compact-select w-full h-7 px-1.5 py-0.5 rounded-md border border-slate-200 dark:border-white/10 bg-slate-50 dark:bg-[#121722] text-[11px] font-mono text-slate-800 dark:text-slate-200 truncate cursor-pointer"
+            >
+              {THEME_OPTIONS.map((opt) => (
+                <option key={opt.id} value={opt.id}>
+                  {t(lang, opt.labelKey)}
+                </option>
+              ))}
+            </select>
+          </div>
 
-        <div>
-          <label
-            htmlFor="sidebar-lang-select"
-            className="block text-[10px] font-mono uppercase tracking-wider text-slate-400 mb-1"
-          >
-            Language
-          </label>
-          <select
-            id="sidebar-lang-select"
-            value={lang}
-            onChange={(e) => handleSelectLanguage(e.target.value as LanguageCode)}
-            className="w-full px-2.5 py-2 rounded-lg border border-slate-200 dark:border-white/10 bg-slate-50 dark:bg-[#121722] text-xs font-mono text-slate-800 dark:text-slate-200 cursor-pointer"
-          >
-            {(Object.keys(LANGUAGE_LABELS) as LanguageCode[]).map((code) => (
-              <option key={code} value={code}>
-                {LANGUAGE_LABELS[code]}
-              </option>
-            ))}
-          </select>
+          <div className="min-w-0">
+            <label
+              htmlFor="sidebar-lang-select"
+              className="block text-[9px] font-mono uppercase tracking-wider text-slate-400 mb-0.5 px-0.5 truncate"
+            >
+              Language
+            </label>
+            <select
+              id="sidebar-lang-select"
+              value={lang}
+              onChange={(e) => handleSelectLanguage(e.target.value as LanguageCode)}
+              className="esp-compact-select w-full h-7 px-1.5 py-0.5 rounded-md border border-slate-200 dark:border-white/10 bg-slate-50 dark:bg-[#121722] text-[11px] font-mono text-slate-800 dark:text-slate-200 truncate cursor-pointer"
+            >
+              {(Object.keys(LANGUAGE_LABELS) as LanguageCode[]).map((code) => (
+                <option key={code} value={code}>
+                  {LANGUAGE_LABELS[code]}
+                </option>
+              ))}
+            </select>
+          </div>
         </div>
 
         <button
           type="button"
           onClick={handleLogout}
-          className="w-full flex items-center justify-center gap-2 px-3 py-2 rounded-lg border border-rose-500/25 bg-rose-500/[0.06] text-xs font-mono font-semibold text-rose-600 dark:text-rose-400 hover:bg-rose-500/15 transition-colors cursor-pointer"
+          className="w-full flex items-center justify-center gap-1.5 px-3 py-1.5 h-8 rounded-lg border border-rose-500/25 bg-rose-500/[0.06] text-[11px] font-mono font-semibold text-rose-600 dark:text-rose-400 hover:bg-rose-500/15 transition-colors cursor-pointer"
         >
-          <LogOut className="w-3.5 h-3.5" />
+          <LogOut className="w-3 h-3" />
           <span>{t(lang, 'logout')}</span>
         </button>
       </div>

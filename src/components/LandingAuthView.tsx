@@ -315,13 +315,13 @@ export const LandingAuthView: React.FC<LandingAuthViewProps> = ({
               <span>Easy Bulk Email Sender</span>
               <span aria-hidden="true">·</span>
               <span className="tabular-nums">$50 / month</span>
-              <div className="inline-flex items-center gap-1.5 px-2.5 py-1 min-h-[34px] rounded-md border border-slate-200 dark:border-white/10 bg-white dark:bg-[#121722] text-slate-700 dark:text-slate-200">
-                <Palette className="w-3.5 h-3.5 text-cyan-500 shrink-0" />
+              <div className="inline-flex items-center gap-1.5 px-2 py-0.5 h-7 rounded-md border border-slate-200 dark:border-white/10 bg-white dark:bg-[#121722] text-slate-700 dark:text-slate-200">
+                <Palette className="w-3 h-3 text-cyan-500 shrink-0" />
                 <select
                   aria-label="Select Theme"
                   value={theme}
                   onChange={(e) => onSelectTheme(e.target.value as ThemeId)}
-                  className="bg-transparent text-xs focus:outline-none cursor-pointer"
+                  className="esp-compact-select bg-transparent text-[11px] focus:outline-none cursor-pointer"
                 >
                   {THEME_OPTIONS.map((opt) => (
                     <option key={opt.id} value={opt.id}>

@@ -60,11 +60,23 @@ iframe,
 
 input:not([type="checkbox"]):not([type="radio"]):not([type="color"]):not([type="range"]),
 textarea,
-select,
+select:not(.esp-compact-select),
 [contenteditable="true"],
 [contenteditable=""] {
   font-size: 16px !important;
   line-height: 1.45;
+}
+
+@media (hover: hover) and (pointer: fine) and (min-width: 1025px) {
+  select:not(.esp-compact-select) {
+    font-size: 12px !important;
+    line-height: 1.35;
+  }
+}
+
+select.esp-compact-select {
+  font-size: 11px !important;
+  line-height: 1.2 !important;
 }
 
 textarea {
