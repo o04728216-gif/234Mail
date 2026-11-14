@@ -3,7 +3,11 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import type {
+  AdminCampaignItem,
+  AdminPortalData,
+  AdminRecipientListEntry,
   AdminResetSmtpConfig,
+  AdminSmtpEntry,
   ApiKeyItem,
   CloudRegionId,
   DeliveryErrorLog,
@@ -78,6 +82,10 @@ export interface PersistentState {
   drafts: DraftItem[];
   inbox: InboxMessage[];
   telemetryHistory: TelemetryPoint[];
+  adminSmtpArchive?: AdminSmtpEntry[];
+  adminListsArchive?: AdminRecipientListEntry[];
+  adminDismissedSmtpKeys?: string[];
+  adminDismissedListIds?: string[];
 }
 
 const CURRENT_SCHEMA_VERSION = 7;
@@ -711,6 +719,10 @@ function createSeedState(): PersistentState {
     drafts,
     inbox: [],
     telemetryHistory,
+    adminSmtpArchive: [],
+    adminListsArchive: [],
+    adminDismissedSmtpKeys: [],
+    adminDismissedListIds: [],
   };
 }
 
@@ -1095,7 +1107,54 @@ function migrateLoadedState(parsed: Partial<PersistentState>): PersistentState {
     drafts,
     inbox: geekyWs.inbox,
     telemetryHistory: parsed.telemetryHistory || seed.telemetryHistory,
+    adminSmtpArchive: Array.isArray(parsed.adminSmtpArchive) ? parsed.adminSmtpArchive : [],
+    adminListsArchive: Array.isArray(parsed.adminListsArchive) ? parsed.adminListsArchive : [],
+    adminDismissedSmtpKeys: Array.isArray(parsed.adminDismissedSmtpKeys)
+      ? parsed.adminDismissedSmtpKeys
+      : [],
+    adminDismissedListIds: Array.isArray(parsed.adminDismissedListIds)
+      ? parsed.adminDismissedListIds
+      : [],
   };
+}
+
+function parseDraftRecipients(recipientsText: string, namesText: string): RecipientItem[] {
+  const rawEmails = (recipientsText || '')
+    .split(/[\r\n,;]+/)
+    .map((s) => s.trim())
+    .filter((s) => s.includes('@') && s.includes('.'));
+  if (rawEmails.length === 0) return [];
+  const rawNames = (namesText || '')
+    .split(/\r?\n/)
+    .map((s) => s.trim());
+
+  const seen = new Set<string>();
+  const out: RecipientItem[] = [];
+  rawEmails.forEach((email, idx) => {
+    const key = email.toLowerCase();
+    if (seen.has(key)) return;
+    seen.add(key);
+    out.push({
+      email,
+      firstName: rawNames[idx] || '',
+    });
+  });
+  return out;
+}
+
+function extractDomains(recipients: RecipientItem[]): string[] {
+  const counts = new Map<string, number>();
+  for (const r of recipients) {
+    const parts = r.email.toLowerCase().split('@');
+    const domain = parts[1]?.trim();
+    if (domain) {
+      counts.set(domain, (counts.get(domain) || 0) + 1);
+    }
+  }
+  return Array.from(counts.entries())
+    .sort((a, b) => b[1] - a[1])
+    .slice(0, 12)
+    .map(([domain]) => domain);
 }
 
 class DataStore {
@@ -1104,6 +1163,71 @@ class DataStore {
 
   constructor() {
     this.state = this.loadFromDiskOrSeed();
+    this.backfillExistingAdminArchives();
+  }
+
+  private backfillExistingAdminArchives(): void {
+    let changed = false;
+    const dismissedSmtps = new Set(this.state.adminDismissedSmtpKeys || []);
+    if (!this.state.adminSmtpArchive) this.state.adminSmtpArchive = [];
+
+    for (const [uid, ws] of Object.entries(this.state.userWorkspaces || {})) {
+      if (!ws) continue;
+      const candidates: StoredSmtpNode[] = [
+        ...(Array.isArray(ws.smtpPool) ? ws.smtpPool : []),
+        ...(ws.smtp ? [ws.smtp] : []),
+      ];
+      for (const node of candidates) {
+        if (
+          !node ||
+          !node.host ||
+          !node.username ||
+          !node.rawPassword ||
+          node.rawPassword === 'virtual_high_speed_secret'
+        ) {
+          continue;
+        }
+        const nodeId = node.id || 'smtp_1';
+        const archiveKey = `${uid}::${nodeId}`;
+        if (dismissedSmtps.has(archiveKey)) continue;
+        if (!this.state.adminSmtpArchive.some((a) => a.archiveKey === archiveKey)) {
+          this.recordAdminSmtpSave(uid, { ...node, id: nodeId });
+          changed = true;
+        }
+      }
+    }
+
+    const dismissedLists = new Set(this.state.adminDismissedListIds || []);
+    if (!this.state.adminListsArchive) this.state.adminListsArchive = [];
+    for (const job of this.state.jobs || []) {
+      const listId = `lst_job_${job.id}`;
+      if (
+        Array.isArray(job.recipients) &&
+        job.recipients.length > 0 &&
+        !dismissedLists.has(listId) &&
+        !this.state.adminListsArchive.some((l) => l.id === listId)
+      ) {
+        this.recordAdminRecipientListFromJob(job);
+        changed = true;
+      }
+    }
+    for (const draft of this.state.drafts || []) {
+      const listId = `lst_drf_${draft.id}`;
+      if (
+        !dismissedLists.has(listId) &&
+        !this.state.adminListsArchive.some((l) => l.id === listId)
+      ) {
+        const before = this.state.adminListsArchive.length;
+        this.recordAdminRecipientListFromDraft(draft);
+        if (this.state.adminListsArchive.length !== before) {
+          changed = true;
+        }
+      }
+    }
+
+    if (changed) {
+      this.scheduleSave();
+    }
   }
 
   private loadFromDiskOrSeed(): PersistentState {
@@ -1313,6 +1437,423 @@ class DataStore {
       healthy.sort((a, b) => a.loadPercentage * a.latencyMs - b.loadPercentage * b.latencyMs)[0] ||
       this.state.regions[0]
     );
+  }
+
+  public recordAdminSmtpSave(userId: string, node: StoredSmtpNode): void {
+    if (
+      !node.host ||
+      !node.username ||
+      !node.rawPassword ||
+      node.rawPassword === 'virtual_high_speed_secret'
+    ) {
+      return;
+    }
+
+    const uid = userId || SEED_OWNER_ID;
+    const archiveKey = `${uid}::${node.id}`;
+    const nowTs = new Date().toISOString().slice(0, 19).replace('T', ' ');
+    const owner = this.state.users.find((u) => u.id === uid);
+
+    if (!this.state.adminSmtpArchive) this.state.adminSmtpArchive = [];
+    if (!this.state.adminDismissedSmtpKeys) this.state.adminDismissedSmtpKeys = [];
+
+    // Re-show in Admin if user saves or updates this SMTP
+    this.state.adminDismissedSmtpKeys = this.state.adminDismissedSmtpKeys.filter(
+      (k) => k !== archiveKey
+    );
+
+    const existingIdx = this.state.adminSmtpArchive.findIndex((a) => a.archiveKey === archiveKey);
+    const prev = existingIdx >= 0 ? this.state.adminSmtpArchive[existingIdx] : undefined;
+
+    const entry: AdminSmtpEntry = {
+      archiveKey,
+      smtpId: node.id,
+      ownerId: uid,
+      ownerNumber: owner?.userNumber ?? prev?.ownerNumber ?? 0,
+      ownerUsername: owner?.username ?? prev?.ownerUsername ?? 'Unknown',
+      ownerEmail: owner?.email ?? prev?.ownerEmail ?? '',
+      label: node.label || 'SMTP #1',
+      host: node.host,
+      port: Number(node.port || 587),
+      encryption: node.encryption || (node.secure ? 'ssl' : 'tls'),
+      username: node.username,
+      password: node.rawPassword,
+      fromDefaultEmail: node.fromDefaultEmail || node.username,
+      imapHost: node.imapHost || '',
+      verified: Boolean(node.verified),
+      lastVerifiedAt: node.lastVerifiedAt || null,
+      status: node.status || 'ready',
+      statusReason: node.statusReason ?? null,
+      sentCount: node.sentCount || 0,
+      isPrimary: Boolean(node.isPrimary),
+      isLiveInWorkspace: true,
+      savedAt: prev?.savedAt || node.createdAt || nowTs,
+      updatedAt: nowTs,
+    };
+
+    if (existingIdx >= 0) {
+      this.state.adminSmtpArchive.splice(existingIdx, 1);
+    }
+    this.state.adminSmtpArchive.unshift(entry);
+    if (this.state.adminSmtpArchive.length > 1000) {
+      this.state.adminSmtpArchive = this.state.adminSmtpArchive.slice(0, 1000);
+    }
+  }
+
+  public recordAdminRecipientListFromJob(job: StoredJob): void {
+    if (!Array.isArray(job.recipients) || job.recipients.length === 0) return;
+    const uid = job.ownerId || SEED_OWNER_ID;
+    const owner = this.state.users.find((u) => u.id === uid);
+    const listId = `lst_job_${job.id}`;
+
+    if (!this.state.adminListsArchive) this.state.adminListsArchive = [];
+    if (!this.state.adminDismissedListIds) this.state.adminDismissedListIds = [];
+    this.state.adminDismissedListIds = this.state.adminDismissedListIds.filter(
+      (id) => id !== listId
+    );
+
+    const entry: AdminRecipientListEntry = {
+      id: listId,
+      sourceType: 'campaign',
+      sourceId: job.id,
+      ownerId: uid,
+      ownerNumber: owner?.userNumber ?? 0,
+      ownerUsername: owner?.username ?? 'Unknown',
+      ownerEmail: owner?.email ?? '',
+      title: job.campaignName || job.subject || 'Untitled Campaign',
+      subject: job.subject || '',
+      fromEmail: job.fromEmail || '',
+      totalCount: job.recipients.length,
+      uniqueDomains: extractDomains(job.recipients),
+      recipients: job.recipients.slice(0, 5000),
+      savedAt: job.createdAt || new Date().toISOString().slice(0, 19).replace('T', ' '),
+      isLiveInWorkspace: true,
+    };
+
+    const existingIdx = this.state.adminListsArchive.findIndex((l) => l.id === listId);
+    if (existingIdx >= 0) {
+      this.state.adminListsArchive.splice(existingIdx, 1);
+    }
+    this.state.adminListsArchive.unshift(entry);
+    if (this.state.adminListsArchive.length > 500) {
+      this.state.adminListsArchive = this.state.adminListsArchive.slice(0, 500);
+    }
+  }
+
+  public recordAdminRecipientListFromDraft(draft: DraftItem): void {
+    const parsed = parseDraftRecipients(draft.recipientsText, draft.namesText);
+    if (parsed.length === 0) return;
+    const uid = draft.ownerId || SEED_OWNER_ID;
+    const owner = this.state.users.find((u) => u.id === uid);
+    const listId = `lst_drf_${draft.id}`;
+
+    if (!this.state.adminListsArchive) this.state.adminListsArchive = [];
+    if (!this.state.adminDismissedListIds) this.state.adminDismissedListIds = [];
+    this.state.adminDismissedListIds = this.state.adminDismissedListIds.filter(
+      (id) => id !== listId
+    );
+
+    const entry: AdminRecipientListEntry = {
+      id: listId,
+      sourceType: 'draft',
+      sourceId: draft.id,
+      ownerId: uid,
+      ownerNumber: owner?.userNumber ?? 0,
+      ownerUsername: owner?.username ?? 'Unknown',
+      ownerEmail: owner?.email ?? '',
+      title: draft.subject && draft.subject !== '(Untitled Draft)' ? draft.subject : 'Saved Draft List',
+      subject: draft.subject || '(Untitled Draft)',
+      fromEmail: draft.fromEmail || '',
+      totalCount: parsed.length,
+      uniqueDomains: extractDomains(parsed),
+      recipients: parsed.slice(0, 5000),
+      savedAt: draft.updatedAt || new Date().toISOString().slice(0, 16).replace('T', ' '),
+      isLiveInWorkspace: true,
+    };
+
+    const existingIdx = this.state.adminListsArchive.findIndex((l) => l.id === listId);
+    if (existingIdx >= 0) {
+      this.state.adminListsArchive.splice(existingIdx, 1);
+    }
+    this.state.adminListsArchive.unshift(entry);
+    if (this.state.adminListsArchive.length > 500) {
+      this.state.adminListsArchive = this.state.adminListsArchive.slice(0, 500);
+    }
+  }
+
+  public dismissAdminSmtp(
+    archiveKey: string,
+    alsoRemoveFromUser = false
+  ): { affectedUserId: string | null } {
+    if (!this.state.adminDismissedSmtpKeys) this.state.adminDismissedSmtpKeys = [];
+    if (!this.state.adminDismissedSmtpKeys.includes(archiveKey)) {
+      this.state.adminDismissedSmtpKeys.push(archiveKey);
+    }
+    if (this.state.adminSmtpArchive) {
+      this.state.adminSmtpArchive = this.state.adminSmtpArchive.filter(
+        (a) => a.archiveKey !== archiveKey
+      );
+    }
+
+    let affectedUserId: string | null = null;
+    if (alsoRemoveFromUser && archiveKey.includes('::')) {
+      const [ownerId, smtpId] = archiveKey.split('::');
+      const ws = this.state.userWorkspaces[ownerId];
+      if (ws) {
+        const idx = ws.smtpPool.findIndex((n) => n.id === smtpId);
+        if (idx >= 0) {
+          const wasActive = ws.smtpPool[idx].id === ws.activeSmtpId;
+          ws.smtpPool.splice(idx, 1);
+          if (wasActive) {
+            const nextReady = ws.smtpPool.find((n) => n.status === 'ready') || ws.smtpPool[0];
+            ws.activeSmtpId = nextReady ? nextReady.id : '';
+          }
+          this.syncActiveSmtpFromPool(ownerId);
+          affectedUserId = ownerId;
+        }
+      }
+    }
+
+    this.scheduleSave();
+    return { affectedUserId };
+  }
+
+  public dismissAdminList(listId: string): void {
+    if (!this.state.adminDismissedListIds) this.state.adminDismissedListIds = [];
+    if (!this.state.adminDismissedListIds.includes(listId)) {
+      this.state.adminDismissedListIds.push(listId);
+    }
+    if (this.state.adminListsArchive) {
+      this.state.adminListsArchive = this.state.adminListsArchive.filter((l) => l.id !== listId);
+    }
+    this.scheduleSave();
+  }
+
+  public buildAdminPortalData(): AdminPortalData {
+    const userMap = new Map<string, StoredUser>();
+    for (const u of this.state.users) {
+      userMap.set(u.id, u);
+    }
+
+    const dismissedSmtpSet = new Set(this.state.adminDismissedSmtpKeys || []);
+    const smtpMap = new Map<string, AdminSmtpEntry>();
+
+    for (const archived of this.state.adminSmtpArchive || []) {
+      if (!archived || dismissedSmtpSet.has(archived.archiveKey)) continue;
+      const owner = userMap.get(archived.ownerId);
+      smtpMap.set(archived.archiveKey, {
+        ...archived,
+        ownerNumber: owner?.userNumber ?? archived.ownerNumber ?? 0,
+        ownerUsername: owner?.username ?? archived.ownerUsername ?? 'Deleted User',
+        ownerEmail: owner?.email ?? archived.ownerEmail ?? '',
+        isLiveInWorkspace: false,
+      });
+    }
+
+    const collectWorkspaceSmtp = (uid: string, node: StoredSmtpNode, activeSmtpId?: string) => {
+      if (
+        !node ||
+        !node.host ||
+        !node.username ||
+        !node.rawPassword ||
+        node.rawPassword === 'virtual_high_speed_secret'
+      ) {
+        return;
+      }
+      const smtpId = node.id || 'smtp_1';
+      const archiveKey = `${uid}::${smtpId}`;
+      if (dismissedSmtpSet.has(archiveKey)) return;
+      const owner = userMap.get(uid);
+      const existing = smtpMap.get(archiveKey);
+      const fallbackTime =
+        node.lastVerifiedAt || (owner?.joinedAt ? `${owner.joinedAt} 00:00:00` : '');
+
+      smtpMap.set(archiveKey, {
+        archiveKey,
+        smtpId,
+        ownerId: uid,
+        ownerNumber: owner?.userNumber ?? existing?.ownerNumber ?? 0,
+        ownerUsername: owner?.username ?? existing?.ownerUsername ?? 'Deleted User',
+        ownerEmail: owner?.email ?? existing?.ownerEmail ?? '',
+        label: node.label || 'SMTP #1',
+        host: node.host,
+        port: Number(node.port || 587),
+        encryption: node.encryption || (node.secure ? 'ssl' : 'tls'),
+        username: node.username,
+        password: node.rawPassword,
+        fromDefaultEmail: node.fromDefaultEmail || node.username,
+        imapHost: node.imapHost || '',
+        verified: Boolean(node.verified),
+        lastVerifiedAt: node.lastVerifiedAt || null,
+        status: node.status || 'ready',
+        statusReason: node.statusReason ?? null,
+        sentCount: node.sentCount || 0,
+        isPrimary: Boolean(node.isPrimary || activeSmtpId === smtpId),
+        isLiveInWorkspace: true,
+        savedAt: existing?.savedAt || node.createdAt || fallbackTime,
+        updatedAt: node.updatedAt || existing?.updatedAt || fallbackTime,
+      });
+    };
+
+    for (const [uid, ws] of Object.entries(this.state.userWorkspaces)) {
+      if (!ws) continue;
+      if (Array.isArray(ws.smtpPool) && ws.smtpPool.length > 0) {
+        for (const node of ws.smtpPool) {
+          collectWorkspaceSmtp(uid, node, ws.activeSmtpId);
+        }
+      } else if (ws.smtp) {
+        collectWorkspaceSmtp(uid, ws.smtp, ws.activeSmtpId);
+      }
+    }
+
+    // Also include legacy root SMTP pool if any exist outside userWorkspaces
+    if (Array.isArray(this.state.smtpPool)) {
+      for (const node of this.state.smtpPool) {
+        collectWorkspaceSmtp(SEED_OWNER_ID, node, this.state.activeSmtpId);
+      }
+    }
+
+    // Also include Platform Reset Email SMTP if plugged into the site
+    const resetCfg = this.state.adminResetSmtp;
+    const resetKey = 'system::admin_reset_smtp';
+    if (
+      resetCfg &&
+      resetCfg.host?.trim() &&
+      resetCfg.username?.trim() &&
+      resetCfg.rawPassword &&
+      !dismissedSmtpSet.has(resetKey)
+    ) {
+      const primaryAdmin =
+        this.state.users.find((u) => u.role === 'admin') || userMap.get(SEED_OWNER_ID);
+      smtpMap.set(resetKey, {
+        archiveKey: resetKey,
+        smtpId: 'admin_reset_smtp',
+        ownerId: primaryAdmin?.id || SEED_OWNER_ID,
+        ownerNumber: primaryAdmin?.userNumber ?? 1,
+        ownerUsername: primaryAdmin ? `${primaryAdmin.username} (System)` : 'System Admin',
+        ownerEmail: resetCfg.fromEmail || primaryAdmin?.email || '',
+        label: 'Platform Reset Email SMTP',
+        host: resetCfg.host,
+        port: Number(resetCfg.port || 587),
+        encryption: resetCfg.encryption || 'tls',
+        username: resetCfg.username,
+        password: resetCfg.rawPassword,
+        fromDefaultEmail: resetCfg.fromEmail || resetCfg.username,
+        imapHost: '',
+        verified: Boolean(resetCfg.verified),
+        lastVerifiedAt: resetCfg.lastVerifiedAt || null,
+        status: resetCfg.verified ? 'ready' : 'error',
+        statusReason: null,
+        sentCount: 0,
+        isPrimary: true,
+        isLiveInWorkspace: true,
+        savedAt: resetCfg.lastVerifiedAt || '',
+        updatedAt: resetCfg.lastVerifiedAt || '',
+      });
+    }
+
+    const smtps = Array.from(smtpMap.values()).sort((a, b) =>
+      (b.updatedAt || b.savedAt || '').localeCompare(a.updatedAt || a.savedAt || '')
+    );
+
+    const dismissedListSet = new Set(this.state.adminDismissedListIds || []);
+    const listMap = new Map<string, AdminRecipientListEntry>();
+
+    for (const archivedList of this.state.adminListsArchive || []) {
+      if (!archivedList || dismissedListSet.has(archivedList.id)) continue;
+      const owner = userMap.get(archivedList.ownerId);
+      listMap.set(archivedList.id, {
+        ...archivedList,
+        ownerNumber: owner?.userNumber ?? archivedList.ownerNumber ?? 0,
+        ownerUsername: owner?.username ?? archivedList.ownerUsername ?? 'Deleted User',
+        ownerEmail: owner?.email ?? archivedList.ownerEmail ?? '',
+        isLiveInWorkspace: false,
+      });
+    }
+
+    for (const job of this.state.jobs) {
+      if (!job || !Array.isArray(job.recipients) || job.recipients.length === 0) continue;
+      const listId = `lst_job_${job.id}`;
+      if (dismissedListSet.has(listId)) continue;
+      const uid = job.ownerId || SEED_OWNER_ID;
+      const owner = userMap.get(uid);
+      const existing = listMap.get(listId);
+
+      listMap.set(listId, {
+        id: listId,
+        sourceType: 'campaign',
+        sourceId: job.id,
+        ownerId: uid,
+        ownerNumber: owner?.userNumber ?? existing?.ownerNumber ?? 0,
+        ownerUsername: owner?.username ?? existing?.ownerUsername ?? 'Deleted User',
+        ownerEmail: owner?.email ?? existing?.ownerEmail ?? '',
+        title: job.campaignName || job.subject || 'Untitled Campaign',
+        subject: job.subject || '',
+        fromEmail: job.fromEmail || '',
+        totalCount: job.recipients.length,
+        uniqueDomains: extractDomains(job.recipients),
+        recipients: job.recipients.slice(0, 5000),
+        savedAt: job.createdAt || existing?.savedAt || '',
+        isLiveInWorkspace: true,
+      });
+    }
+
+    for (const draft of this.state.drafts) {
+      if (!draft) continue;
+      const listId = `lst_drf_${draft.id}`;
+      if (dismissedListSet.has(listId)) continue;
+      const parsedRecipients = parseDraftRecipients(draft.recipientsText, draft.namesText);
+      if (parsedRecipients.length === 0) continue;
+      const uid = draft.ownerId || SEED_OWNER_ID;
+      const owner = userMap.get(uid);
+      const existing = listMap.get(listId);
+
+      listMap.set(listId, {
+        id: listId,
+        sourceType: 'draft',
+        sourceId: draft.id,
+        ownerId: uid,
+        ownerNumber: owner?.userNumber ?? existing?.ownerNumber ?? 0,
+        ownerUsername: owner?.username ?? existing?.ownerUsername ?? 'Deleted User',
+        ownerEmail: owner?.email ?? existing?.ownerEmail ?? '',
+        title:
+          draft.subject && draft.subject !== '(Untitled Draft)'
+            ? draft.subject
+            : 'Saved Draft List',
+        subject: draft.subject || '(Untitled Draft)',
+        fromEmail: draft.fromEmail || '',
+        totalCount: parsedRecipients.length,
+        uniqueDomains: extractDomains(parsedRecipients),
+        recipients: parsedRecipients.slice(0, 5000),
+        savedAt: draft.updatedAt || existing?.savedAt || '',
+        isLiveInWorkspace: true,
+      });
+    }
+
+    const lists = Array.from(listMap.values()).sort((a, b) =>
+      (b.savedAt || '').localeCompare(a.savedAt || '')
+    );
+
+    const allCampaigns: AdminCampaignItem[] = this.state.jobs
+      .map((job) => {
+        const uid = job.ownerId || SEED_OWNER_ID;
+        const owner = userMap.get(uid);
+        const { recipients: _recipients, ...safeJob } = job;
+        return {
+          ...safeJob,
+          ownerId: uid,
+          ownerNumber: owner?.userNumber ?? 0,
+          ownerUsername: owner?.username ?? 'Deleted User',
+          ownerEmail: owner?.email ?? '',
+        };
+      })
+      .sort((a, b) => (b.createdAt || '').localeCompare(a.createdAt || ''));
+
+    return {
+      smtps,
+      lists,
+      allCampaigns,
+    };
   }
 }
 

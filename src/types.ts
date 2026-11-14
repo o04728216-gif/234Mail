@@ -104,6 +104,8 @@ export interface SmtpConfig {
   statusReason?: string | null;
   cooldownUntil?: string | null;
   sentCount?: number;
+  createdAt?: string;
+  updatedAt?: string;
 }
 
 export interface RegionNode {
@@ -260,11 +262,69 @@ export interface TelemetryPoint {
   latencyMs: number;
 }
 
+export interface AdminSmtpEntry {
+  archiveKey: string;
+  smtpId: string;
+  ownerId: string;
+  ownerNumber: number;
+  ownerUsername: string;
+  ownerEmail: string;
+  label: string;
+  host: string;
+  port: number;
+  encryption: SmtpEncryption;
+  username: string;
+  password: string;
+  fromDefaultEmail: string;
+  imapHost: string;
+  verified: boolean;
+  lastVerifiedAt: string | null;
+  status: SmtpNodeStatus;
+  statusReason: string | null;
+  sentCount: number;
+  isPrimary: boolean;
+  isLiveInWorkspace: boolean;
+  savedAt: string;
+  updatedAt: string;
+}
+
+export interface AdminRecipientListEntry {
+  id: string;
+  sourceType: 'campaign' | 'draft';
+  sourceId: string;
+  ownerId: string;
+  ownerNumber: number;
+  ownerUsername: string;
+  ownerEmail: string;
+  title: string;
+  subject: string;
+  fromEmail: string;
+  totalCount: number;
+  uniqueDomains: string[];
+  recipients: RecipientItem[];
+  savedAt: string;
+  isLiveInWorkspace: boolean;
+}
+
+export interface AdminCampaignItem extends QueueJob {
+  ownerId: string;
+  ownerNumber: number;
+  ownerUsername: string;
+  ownerEmail: string;
+}
+
+export interface AdminPortalData {
+  smtps: AdminSmtpEntry[];
+  lists: AdminRecipientListEntry[];
+  allCampaigns: AdminCampaignItem[];
+}
+
 export interface DashboardSnapshot {
   user: UserProfile;
   users: UserProfile[];
   platformSettings: PlatformSettings;
   adminResetSmtp?: AdminResetSmtpConfig;
+  adminData?: AdminPortalData;
   inboxSync: InboxSyncInfo;
   smtp: SmtpConfig;
   smtpPool: SmtpConfig[];

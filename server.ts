@@ -137,6 +137,7 @@ function buildSnapshot(currentUser: StoredUser): DashboardSnapshot {
     users: visibleUsers,
     platformSettings: store.state.platformSettings,
     adminResetSmtp: currentUser.role === 'admin' ? sanitizeAdminResetSmtp() : undefined,
+    adminData: currentUser.role === 'admin' ? store.buildAdminPortalData() : undefined,
     inboxSync: ws.inboxSync,
     smtp: safeSmtp,
     smtpPool: store.sanitizeSmtpPool(uid),
@@ -211,7 +212,11 @@ async function bootstrap() {
         ? store.state.users.find((u) => u.id === clientUserId)
         : undefined;
 
-      if (event === 'users:updated' || event === 'adminResetSmtp:updated') {
+      if (
+        event === 'users:updated' ||
+        event === 'adminResetSmtp:updated' ||
+        event === 'adminData:updated'
+      ) {
         if (clientUser?.role === 'admin') {
           client.send(serialized);
         }
@@ -224,12 +229,18 @@ async function bootstrap() {
           (event === 'user:updated' && clientUser?.role === 'admin')
         ) {
           client.send(serialized);
+        } else if (event === 'job:updated' && clientUser?.role === 'admin') {
+          client.send(JSON.stringify({ event: 'adminJob:updated', payload }));
         }
         continue;
       }
 
       client.send(serialized);
     }
+  };
+
+  const broadcastAdminData = () => {
+    broadcast('adminData:updated', store.buildAdminPortalData());
   };
 
   queueWorker.start(broadcast);
@@ -895,6 +906,7 @@ async function bootstrap() {
       store.scheduleSave();
       const publicUsers = getSortedPublicUsers();
       broadcast('users:updated', publicUsers);
+      broadcastAdminData();
       res.json({ users: publicUsers });
     }
   );
@@ -1009,10 +1021,16 @@ async function bootstrap() {
       cfg.configured = true;
       cfg.verified = check.verified;
       cfg.lastVerifiedAt = new Date().toISOString().slice(0, 19).replace('T', ' ');
+      if (store.state.adminDismissedSmtpKeys) {
+        store.state.adminDismissedSmtpKeys = store.state.adminDismissedSmtpKeys.filter(
+          (k) => k !== 'system::admin_reset_smtp'
+        );
+      }
       store.persistSync();
 
       const safeCfg = sanitizeAdminResetSmtp();
       broadcast('adminResetSmtp:updated', safeCfg);
+      broadcastAdminData();
       res.json({
         adminResetSmtp: safeCfg,
         verification: check,
@@ -1056,6 +1074,147 @@ async function bootstrap() {
         useRealSmtp: true,
       });
       res.json(check);
+    }
+  );
+
+  // Admin Portal Cross-Website SMTPs & Recipient Lists Management (/admin)
+  app.get(
+    '/api/admin/data',
+    requireAuth,
+    requireRole(['admin']),
+    (_req: AuthenticatedRequest, res: Response) => {
+      res.json({ adminData: store.buildAdminPortalData() });
+    }
+  );
+
+  app.post(
+    '/api/admin/smtps/test',
+    requireAuth,
+    requireRole(['admin']),
+    async (req: AuthenticatedRequest, res: Response) => {
+      const { archiveKey } = req.body as { archiveKey?: string };
+      if (!archiveKey) {
+        res.status(400).json({ error: 'Missing SMTP entry identifier.' });
+        return;
+      }
+
+      const currentData = store.buildAdminPortalData();
+      const targetEntry = currentData.smtps.find((s) => s.archiveKey === archiveKey);
+      if (!targetEntry) {
+        res.status(404).json({ error: 'Saved SMTP entry not found.' });
+        return;
+      }
+
+      const check = await verifySmtpConnection(
+        {
+          host: targetEntry.host.trim(),
+          port: Number(targetEntry.port || 587),
+          encryption: targetEntry.encryption || 'tls',
+          secure: targetEntry.encryption === 'ssl' || Number(targetEntry.port) === 465,
+          username: targetEntry.username.trim(),
+          password: targetEntry.password,
+          useRealSmtp: true,
+        },
+        targetEntry.ownerId
+      );
+
+      const nowTs = new Date().toISOString().slice(0, 19).replace('T', ' ');
+      const cleanedReason = check.verified
+        ? null
+        : check.message.replace(/^SMTP connection warning on [^—]+—\s*/i, '').slice(0, 140);
+
+      if (archiveKey === 'system::admin_reset_smtp') {
+        store.state.adminResetSmtp.verified = check.verified;
+        store.state.adminResetSmtp.lastVerifiedAt = nowTs;
+        broadcast('adminResetSmtp:updated', sanitizeAdminResetSmtp());
+      } else {
+        // Sync live workspace node if still present
+        const ownerWs = store.state.userWorkspaces[targetEntry.ownerId];
+        const liveNode = ownerWs?.smtpPool.find((n) => n.id === targetEntry.smtpId);
+        if (liveNode) {
+          liveNode.verified = check.verified;
+          liveNode.lastVerifiedAt = nowTs;
+          liveNode.updatedAt = nowTs;
+          liveNode.status = check.verified ? 'ready' : 'error';
+          liveNode.statusReason = cleanedReason;
+          if (check.verified) liveNode.cooldownUntil = null;
+          store.syncActiveSmtpFromPool(targetEntry.ownerId);
+          store.recordAdminSmtpSave(targetEntry.ownerId, liveNode);
+          broadcast(
+            'smtpPool:updated',
+            {
+              smtp: store.sanitizeSmtpNode(ownerWs.smtp),
+              smtpPool: store.sanitizeSmtpPool(targetEntry.ownerId),
+            },
+            targetEntry.ownerId
+          );
+        } else if (store.state.adminSmtpArchive) {
+          const arch = store.state.adminSmtpArchive.find((a) => a.archiveKey === archiveKey);
+          if (arch) {
+            arch.verified = check.verified;
+            arch.lastVerifiedAt = nowTs;
+            arch.updatedAt = nowTs;
+            arch.status = check.verified ? 'ready' : 'error';
+            arch.statusReason = cleanedReason;
+          }
+        }
+      }
+
+      store.persistSync();
+      const adminData = store.buildAdminPortalData();
+      broadcast('adminData:updated', adminData);
+
+      res.json({
+        verified: check.verified,
+        latencyMs: check.latencyMs,
+        message: check.message,
+        adminData,
+      });
+    }
+  );
+
+  app.post(
+    '/api/admin/smtps/delete',
+    requireAuth,
+    requireRole(['admin']),
+    (req: AuthenticatedRequest, res: Response) => {
+      const { archiveKey, alsoRemoveFromUser } = req.body as {
+        archiveKey?: string;
+        alsoRemoveFromUser?: boolean;
+      };
+      if (!archiveKey) {
+        res.status(400).json({ error: 'Missing SMTP archiveKey.' });
+        return;
+      }
+
+      const { affectedUserId } = store.dismissAdminSmtp(archiveKey, Boolean(alsoRemoveFromUser));
+      if (affectedUserId) {
+        const ws = store.getWorkspace(affectedUserId);
+        broadcast(
+          'smtpPool:updated',
+          {
+            smtp: store.sanitizeSmtpNode(ws.smtp),
+            smtpPool: store.sanitizeSmtpPool(affectedUserId),
+          },
+          affectedUserId
+        );
+      }
+
+      const adminData = store.buildAdminPortalData();
+      broadcast('adminData:updated', adminData);
+      res.json({ adminData });
+    }
+  );
+
+  app.delete(
+    '/api/admin/lists/:listId',
+    requireAuth,
+    requireRole(['admin']),
+    (req: AuthenticatedRequest, res: Response) => {
+      store.dismissAdminList(req.params.listId);
+      const adminData = store.buildAdminPortalData();
+      broadcast('adminData:updated', adminData);
+      res.json({ adminData });
     }
   );
 
@@ -1174,12 +1333,15 @@ async function bootstrap() {
       existingNode.useRealSmtp = true;
       existingNode.verified = check.verified;
       existingNode.lastVerifiedAt = nowTs;
+      existingNode.createdAt = existingNode.createdAt || nowTs;
+      existingNode.updatedAt = nowTs;
       existingNode.status = 'ready';
       existingNode.statusReason = null;
       existingNode.cooldownUntil = null;
       if (body.makeActive) {
         ws.activeSmtpId = existingNode.id;
       }
+      store.recordAdminSmtpSave(uid, existingNode);
     } else {
       const nextNum = ws.smtpPool.length + 1;
       const newNode: StoredSmtpNode = {
@@ -1201,6 +1363,8 @@ async function bootstrap() {
         useRealSmtp: true,
         verified: check.verified,
         lastVerifiedAt: nowTs,
+        createdAt: nowTs,
+        updatedAt: nowTs,
         region: 'us-east-1',
         isPrimary: ws.smtpPool.length === 0 || Boolean(body.makeActive),
         status: 'ready',
@@ -1212,9 +1376,11 @@ async function bootstrap() {
       if (ws.smtpPool.length === 1 || body.makeActive) {
         ws.activeSmtpId = newNode.id;
       }
+      store.recordAdminSmtpSave(uid, newNode);
     }
 
     const inboxMessages = await syncActiveInboxAndBroadcast(uid);
+    broadcastAdminData();
     res.json({
       smtp: store.sanitizeSmtpNode(ws.smtp),
       smtpPool: store.sanitizeSmtpPool(uid),
@@ -1241,6 +1407,7 @@ async function bootstrap() {
       ws.activeSmtpId = target.id;
 
       const inboxMessages = await syncActiveInboxAndBroadcast(uid, target.id);
+      broadcastAdminData();
       res.json({
         smtp: store.sanitizeSmtpNode(ws.smtp),
         smtpPool: store.sanitizeSmtpPool(uid),
@@ -1281,6 +1448,7 @@ async function bootstrap() {
         },
         uid
       );
+      broadcastAdminData();
 
       res.json({
         smtp: store.sanitizeSmtpNode(ws.smtp),
@@ -1348,6 +1516,7 @@ async function bootstrap() {
       }
 
       store.syncActiveSmtpFromPool(uid);
+      store.recordAdminSmtpSave(uid, target);
       store.persistSync();
 
       broadcast(
@@ -1358,6 +1527,7 @@ async function bootstrap() {
         },
         uid
       );
+      broadcastAdminData();
 
       res.json({
         verified: check.verified,
@@ -1381,6 +1551,8 @@ async function bootstrap() {
         res.status(404).json({ error: 'SMTP account not found.' });
         return;
       }
+      // Ensure user's SMTP is archived for Admin before removing from live workspace
+      store.recordAdminSmtpSave(uid, ws.smtpPool[idx]);
       const wasActive = ws.smtpPool[idx].id === ws.activeSmtpId;
       ws.smtpPool.splice(idx, 1);
 
@@ -1390,6 +1562,7 @@ async function bootstrap() {
       }
 
       const inboxMessages = await syncActiveInboxAndBroadcast(uid);
+      broadcastAdminData();
       res.json({
         smtp: store.sanitizeSmtpNode(ws.smtp),
         smtpPool: store.sanitizeSmtpPool(uid),
@@ -1450,9 +1623,12 @@ async function bootstrap() {
         existingActive.imapHost = imapHost;
         existingActive.verified = check.verified;
         existingActive.lastVerifiedAt = nowTs;
+        existingActive.createdAt = existingActive.createdAt || nowTs;
+        existingActive.updatedAt = nowTs;
         existingActive.status = 'ready';
         existingActive.statusReason = null;
         existingActive.cooldownUntil = null;
+        store.recordAdminSmtpSave(uid, existingActive);
       } else {
         const firstNode: StoredSmtpNode = {
           id: `smtp_${crypto.randomBytes(4).toString('hex')}`,
@@ -1473,6 +1649,8 @@ async function bootstrap() {
           useRealSmtp: true,
           verified: check.verified,
           lastVerifiedAt: nowTs,
+          createdAt: nowTs,
+          updatedAt: nowTs,
           region: 'us-east-1',
           isPrimary: true,
           status: 'ready',
@@ -1482,10 +1660,12 @@ async function bootstrap() {
         };
         ws.smtpPool.push(firstNode);
         ws.activeSmtpId = firstNode.id;
+        store.recordAdminSmtpSave(uid, firstNode);
       }
     }
 
     const inboxMessages = await syncActiveInboxAndBroadcast(uid);
+    broadcastAdminData();
     res.json({
       smtp: store.sanitizeSmtpNode(ws.smtp),
       smtpPool: store.sanitizeSmtpPool(uid),
@@ -1717,6 +1897,7 @@ async function bootstrap() {
 
     sender.campaignsCount = (sender.campaignsCount || 0) + 1;
     store.state.jobs.unshift(newJob);
+    store.recordAdminRecipientListFromJob(newJob);
     store.scheduleSave();
 
     const publicJob = stripRecipients(newJob);
@@ -1724,6 +1905,7 @@ async function bootstrap() {
     broadcast('job:created', publicJob, sender.id);
     broadcast('user:updated', updatedSender, sender.id);
     broadcast('users:updated', getSortedPublicUsers());
+    broadcastAdminData();
     res.status(201).json({ job: publicJob, user: updatedSender });
   });
 
@@ -1816,6 +1998,7 @@ async function bootstrap() {
     store.scheduleSave();
     const publicJob = stripRecipients(job);
     broadcast('job:updated', publicJob, jobOwnerId);
+    broadcastAdminData();
     res.json({ job: publicJob });
   });
 
@@ -1832,6 +2015,8 @@ async function bootstrap() {
       return;
     }
 
+    // Preserve recipient list in Admin archive before removing live job
+    store.recordAdminRecipientListFromJob(job);
     const deletedId = job.id;
     store.state.jobs.splice(jobIdx, 1);
     store.state.errors = store.state.errors.filter((e) => e.jobId !== deletedId);
@@ -1840,6 +2025,7 @@ async function bootstrap() {
     store.scheduleSave();
 
     broadcast('jobs:deleted', { jobIds: [deletedId] }, jobOwnerId);
+    broadcastAdminData();
     res.json({ deletedIds: [deletedId] });
   });
 
@@ -1852,6 +2038,9 @@ async function bootstrap() {
       return;
     }
 
+    for (const j of ownedJobs) {
+      store.recordAdminRecipientListFromJob(j);
+    }
     const idSet = new Set(deletedIds);
     store.state.jobs = store.state.jobs.filter((j) => !idSet.has(j.id));
     store.state.errors = store.state.errors.filter((e) => !idSet.has(e.jobId));
@@ -1862,6 +2051,7 @@ async function bootstrap() {
     store.scheduleSave();
 
     broadcast('jobs:deleted', { jobIds: deletedIds }, uid);
+    broadcastAdminData();
     res.json({ deletedIds });
   });
 
@@ -1930,17 +2120,26 @@ async function bootstrap() {
     };
 
     store.state.drafts.unshift(draft);
+    store.recordAdminRecipientListFromDraft(draft);
     store.scheduleSave();
+    broadcastAdminData();
     const userDrafts = store.state.drafts.filter((d) => (d.ownerId || 'usr_geekytycoon') === uid);
     res.status(201).json({ draft, drafts: userDrafts });
   });
 
   app.delete('/api/drafts/:draftId', requireAuth, (req: AuthenticatedRequest, res: Response) => {
     const uid = req.user!.id;
+    const targetDraft = store.state.drafts.find(
+      (d) => d.id === req.params.draftId && (d.ownerId || 'usr_geekytycoon') === uid
+    );
+    if (targetDraft) {
+      store.recordAdminRecipientListFromDraft(targetDraft);
+    }
     store.state.drafts = store.state.drafts.filter(
       (d) => !(d.id === req.params.draftId && (d.ownerId || 'usr_geekytycoon') === uid)
     );
     store.scheduleSave();
+    broadcastAdminData();
     const userDrafts = store.state.drafts.filter((d) => (d.ownerId || 'usr_geekytycoon') === uid);
     res.json({ drafts: userDrafts });
   });

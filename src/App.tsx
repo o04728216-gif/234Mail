@@ -32,6 +32,8 @@ import { OverviewView } from './components/OverviewAndAnalytics';
 import { PWAInstallButton } from './components/PWAInstallButton';
 import { LANGUAGE_LABELS, THEME_OPTIONS, t } from './i18n';
 import type {
+  AdminCampaignItem,
+  AdminPortalData,
   AdminResetSmtpConfig,
   DashboardSnapshot,
   DeliveryErrorLog,
@@ -395,6 +397,28 @@ export default function App() {
                   adminResetSmtp,
                 };
               }
+              case 'adminData:updated': {
+                if (prev.user.role !== 'admin') return prev;
+                const adminData = msg.payload as AdminPortalData;
+                return {
+                  ...prev,
+                  adminData,
+                };
+              }
+              case 'adminJob:updated': {
+                if (prev.user.role !== 'admin' || !prev.adminData) return prev;
+                const updatedJob = msg.payload as QueueJob;
+                const updatedAllCampaigns: AdminCampaignItem[] = prev.adminData.allCampaigns.map(
+                  (c) => (c.id === updatedJob.id ? { ...c, ...updatedJob, ownerId: c.ownerId } : c)
+                );
+                return {
+                  ...prev,
+                  adminData: {
+                    ...prev.adminData,
+                    allCampaigns: updatedAllCampaigns,
+                  },
+                };
+              }
               case 'inbox:synced': {
                 const synced = msg.payload as {
                   inbox: InboxMessage[];
@@ -568,107 +592,37 @@ export default function App() {
     }
 
     return (
-      <div className="min-h-[100dvh] flex flex-col bg-slate-50 text-slate-900 dark:bg-[#07090e] dark:text-slate-100 transition-colors">
-        <header className="min-h-14 shrink-0 px-3.5 sm:px-6 lg:px-10 py-2 border-b border-slate-200 dark:border-white/[0.07] bg-white dark:bg-[#090c13] flex items-center justify-between gap-2 sm:gap-4 sticky top-0 z-30">
-          <div className="flex items-center gap-2.5 sm:gap-4 min-w-0">
-            <a
-              href="/"
-              onClick={(e) => {
-                if (!e.metaKey && !e.ctrlKey && !e.shiftKey && !e.altKey) {
-                  e.preventDefault();
-                  navigateTo('/');
+      <AdminDashboardView
+        token={token}
+        snapshot={snapshot}
+        theme={theme}
+        lang={lang}
+        onSelectTheme={handleSelectTheme}
+        onSelectLanguage={handleSelectLanguage}
+        onLogout={handleLogout}
+        onNavigateHome={() => navigateTo('/')}
+        onUsersUpdated={(users, updatedSelf) =>
+          setSnapshot((prev) =>
+            prev
+              ? {
+                  ...prev,
+                  users,
+                  user: updatedSelf || prev.user,
                 }
-              }}
-              className="text-base sm:text-lg font-extrabold font-display tracking-tight whitespace-nowrap shrink-0"
-            >
-              <span className="text-slate-900 dark:text-white">234</span>
-              <span className="text-cyan-600 dark:text-cyan-400">Mail</span>
-            </a>
-
-            <a
-              href="/"
-              onClick={(e) => {
-                if (!e.metaKey && !e.ctrlKey && !e.shiftKey && !e.altKey) {
-                  e.preventDefault();
-                  navigateTo('/');
-                }
-              }}
-              className="text-xs font-mono text-slate-500 dark:text-slate-400 hover:text-cyan-500 dark:hover:text-cyan-400 transition-colors whitespace-nowrap truncate"
-            >
-              <span className="sm:hidden">← Mail</span>
-              <span className="hidden sm:inline">← Open Mail App</span>
-            </a>
-          </div>
-
-          <div className="flex items-center gap-1.5 sm:gap-2 text-xs font-mono shrink-0">
-            <PWAInstallButton />
-            <select
-              aria-label="Admin Theme"
-              value={theme}
-              onChange={(e) => handleSelectTheme(e.target.value as ThemeId)}
-              className="esp-compact-select h-7 w-[92px] sm:w-[112px] px-1.5 py-0.5 rounded-md border border-slate-200 dark:border-white/10 bg-white dark:bg-[#121722] text-[11px] font-mono text-slate-700 dark:text-slate-200 truncate cursor-pointer"
-            >
-              {THEME_OPTIONS.map((opt) => (
-                <option key={opt.id} value={opt.id}>
-                  {t(lang, opt.labelKey)}
-                </option>
-              ))}
-            </select>
-            <select
-              aria-label="Admin Language"
-              value={lang}
-              onChange={(e) => handleSelectLanguage(e.target.value as LanguageCode)}
-              className="esp-compact-select h-7 w-[78px] sm:w-[92px] px-1.5 py-0.5 rounded-md border border-slate-200 dark:border-white/10 bg-white dark:bg-[#121722] text-[11px] font-mono text-slate-700 dark:text-slate-200 truncate cursor-pointer"
-            >
-              {(Object.keys(LANGUAGE_LABELS) as LanguageCode[]).map((code) => (
-                <option key={code} value={code}>
-                  {LANGUAGE_LABELS[code]}
-                </option>
-              ))}
-            </select>
-
-            <span className="hidden md:inline-flex px-3 py-1.5 rounded-full border border-rose-500/35 bg-rose-500/10 text-rose-600 dark:text-rose-400 font-semibold items-center gap-1.5">
-              <Settings className="w-3.5 h-3.5" />
-              <span>Admin</span>
-            </span>
-
-            <button
-              type="button"
-              onClick={handleLogout}
-              className="px-2.5 sm:px-3.5 py-1.5 min-h-[38px] rounded-lg border border-slate-200 dark:border-white/10 bg-white dark:bg-[#0d1118] text-slate-600 dark:text-slate-300 hover:text-slate-900 dark:hover:text-white whitespace-nowrap cursor-pointer"
-            >
-              {t(lang, 'logout')}
-            </button>
-          </div>
-        </header>
-
-        <main className="flex-1 esp-grid-bg p-3.5 sm:p-6 lg:p-8 xl:px-12 overflow-y-auto">
-          <div className="max-w-[1480px] w-full mx-auto">
-            <AdminDashboardView
-              token={token}
-              snapshot={snapshot}
-              onUsersUpdated={(users, updatedSelf) =>
-                setSnapshot((prev) =>
-                  prev
-                    ? {
-                        ...prev,
-                        users,
-                        user: updatedSelf || prev.user,
-                      }
-                    : prev
-                )
-              }
-              onPlatformSettingsUpdated={(platformSettings) =>
-                setSnapshot((prev) => (prev ? { ...prev, platformSettings } : prev))
-              }
-              onAdminResetSmtpUpdated={(adminResetSmtp) =>
-                setSnapshot((prev) => (prev ? { ...prev, adminResetSmtp } : prev))
-              }
-              onImpersonateUser={handleImpersonateUser}
-            />
-          </div>
-        </main>
-      </div>
+              : prev
+          )
+        }
+        onPlatformSettingsUpdated={(platformSettings) =>
+          setSnapshot((prev) => (prev ? { ...prev, platformSettings } : prev))
+        }
+        onAdminResetSmtpUpdated={(adminResetSmtp) =>
+          setSnapshot((prev) => (prev ? { ...prev, adminResetSmtp } : prev))
+        }
+        onAdminDataUpdated={(adminData) =>
+          setSnapshot((prev) => (prev ? { ...prev, adminData } : prev))
+        }
+        onImpersonateUser={handleImpersonateUser}
+      />
     );
   }
 
