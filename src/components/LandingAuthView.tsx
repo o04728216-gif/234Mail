@@ -317,9 +317,7 @@ export const LandingAuthView: React.FC<LandingAuthViewProps> = ({
           {/* Left Column — Plain, Simple Everyday Language (Theme option removed for logged-out visitors) */}
           <div className="lg:col-span-7 space-y-5 sm:space-y-6 min-w-0">
             <div className="flex flex-wrap items-center gap-2 sm:gap-3 text-xs font-medium text-cyan-700 dark:text-cyan-400">
-              <span>Easy Bulk Email Sender</span>
-              <span aria-hidden="true">·</span>
-              <span className="tabular-nums">$20 / month</span>
+              
             </div>
 
             <h1 className="font-display font-extrabold tracking-tight leading-[1.08] text-3xl sm:text-5xl xl:text-[4rem] text-balance text-slate-900 dark:text-white">
