@@ -316,10 +316,6 @@ export const LandingAuthView: React.FC<LandingAuthViewProps> = ({
         >
           {/* Left Column — Plain, Simple Everyday Language (Theme option removed for logged-out visitors) */}
           <div className="lg:col-span-7 space-y-5 sm:space-y-6 min-w-0">
-            <div className="flex flex-wrap items-center gap-2 sm:gap-3 text-xs font-medium text-cyan-700 dark:text-cyan-400">
-              
-            </div>
-
             <h1 className="font-display font-extrabold tracking-tight leading-[1.08] text-3xl sm:text-5xl xl:text-[4rem] text-balance text-slate-900 dark:text-white">
               Send Emails Easily From{' '}
               <span className="bg-gradient-to-r from-cyan-500 via-sky-500 to-indigo-500 dark:from-cyan-300 dark:via-cyan-400 dark:to-indigo-400 bg-clip-text text-transparent">

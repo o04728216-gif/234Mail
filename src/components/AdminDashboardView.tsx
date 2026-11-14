@@ -2,7 +2,6 @@ import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   Activity,
   ArrowLeft,
-  ArrowRight,
   Check,
   Copy,
   Database,
@@ -2868,171 +2867,26 @@ export const AdminDashboardView: React.FC<AdminDashboardViewProps> = ({
 };
 
 // ============================================================================
-// ADMIN SIGN-IN & PASSWORD RESET PORTAL (/admin)
+// ADMIN SIGN-IN PORTAL (/admin)
 // ============================================================================
 interface AdminLoginViewProps {
-  currentNonAdminUsername?: string | null;
-  resetToken?: string | null;
-  onClearResetToken?: () => void;
-  onNavigateUrl?: (nextPath: string) => void;
   onAuthenticatedAdmin: (token: string, snapshot: DashboardSnapshot) => void;
   onNavigateHome: () => void;
 }
 
 export const AdminLoginView: React.FC<AdminLoginViewProps> = ({
-  currentNonAdminUsername,
-  resetToken,
-  onClearResetToken,
-  onNavigateUrl,
   onAuthenticatedAdmin,
   onNavigateHome,
 }) => {
-  const [mode, setMode] = useState<'signin' | 'forgot' | 'new_password'>(() =>
-    resetToken ? 'new_password' : 'signin'
-  );
   const [identifier, setIdentifier] = useState('');
   const [password, setPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
-  const [newPassword, setNewPassword] = useState('');
-  const [confirmPassword, setConfirmPassword] = useState('');
-  const [showNewPassword, setShowNewPassword] = useState(false);
-  const [showConfirmPassword, setShowConfirmPassword] = useState(false);
   const [loading, setLoading] = useState(false);
-  const [verifyingToken, setVerifyingToken] = useState(false);
-  const [verifiedAccount, setVerifiedAccount] = useState<{
-    username: string;
-    email: string;
-  } | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [successMsg, setSuccessMsg] = useState<string | null>(null);
-  const [magicLinkSentInfo, setMagicLinkSentInfo] = useState<{
-    email: string;
-    message: string;
-    magicLink?: string;
-  } | null>(null);
-
-  useEffect(() => {
-    if (!resetToken) {
-      setVerifiedAccount(null);
-      setMode((prev) => (prev === 'new_password' ? 'signin' : prev));
-      return;
-    }
-
-    let cancelled = false;
-    setMode('new_password');
-    setError(null);
-    setSuccessMsg(null);
-    setMagicLinkSentInfo(null);
-    setVerifyingToken(true);
-
-    apiRequest<{ ok: boolean; username: string; email: string }>(
-      `/api/auth/verify-reset-token?token=${encodeURIComponent(resetToken)}`
-    )
-      .then((res) => {
-        if (!cancelled) {
-          setVerifiedAccount({ username: res.username, email: res.email });
-        }
-      })
-      .catch((err) => {
-        if (!cancelled) {
-          setVerifiedAccount(null);
-          setError(
-            err instanceof Error
-              ? err.message
-              : 'This magic link is invalid or has expired. Please request a new one.'
-          );
-        }
-      })
-      .finally(() => {
-        if (!cancelled) {
-          setVerifyingToken(false);
-        }
-      });
-
-    return () => {
-      cancelled = true;
-    };
-  }, [resetToken]);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError(null);
-    setSuccessMsg(null);
-
-    if (mode === 'forgot') {
-      if (!identifier.trim()) {
-        setError('Please enter your email address or username.');
-        return;
-      }
-      setLoading(true);
-      setMagicLinkSentInfo(null);
-      try {
-        const res = await apiRequest<{
-          ok: boolean;
-          email: string;
-          username: string;
-          sentViaLiveSmtp: boolean;
-          magicLink?: string;
-          message: string;
-        }>('/api/auth/forgot-password', {
-          method: 'POST',
-          body: JSON.stringify({
-            identifier: identifier.trim(),
-            origin: window.location.origin,
-            returnPath: '/admin',
-          }),
-        });
-        setMagicLinkSentInfo({
-          email: res.email,
-          message: res.message,
-          magicLink: res.magicLink,
-        });
-      } catch (err) {
-        setError(err instanceof Error ? err.message : 'Could not send magic link.');
-      } finally {
-        setLoading(false);
-      }
-      return;
-    }
-
-    if (mode === 'new_password') {
-      if (!resetToken) {
-        setError('Missing magic reset link. Please request a new link.');
-        return;
-      }
-      if (newPassword.length < 4) {
-        setError('New password must be at least 4 characters.');
-        return;
-      }
-      if (newPassword !== confirmPassword) {
-        setError('Passwords do not match.');
-        return;
-      }
-      setLoading(true);
-      try {
-        const res = await apiRequest<{ ok: boolean; username: string; message: string }>(
-          '/api/auth/reset-password',
-          {
-            method: 'POST',
-            body: JSON.stringify({ token: resetToken, newPassword }),
-          }
-        );
-        onClearResetToken?.();
-        setIdentifier(res.username);
-        setPassword('');
-        setNewPassword('');
-        setConfirmPassword('');
-        setVerifiedAccount(null);
-        setMode('signin');
-        setSuccessMsg(res.message);
-      } catch (err) {
-        setError(err instanceof Error ? err.message : 'Could not reset password.');
-      } finally {
-        setLoading(false);
-      }
-      return;
-    }
-
     setLoading(true);
     try {
       const res = await apiRequest<{ token: string; snapshot: DashboardSnapshot }>(
@@ -3090,34 +2944,9 @@ export const AdminLoginView: React.FC<AdminLoginViewProps> = ({
               <span>ADMIN PORTAL</span>
             </div>
             <h1 className="text-2xl font-extrabold font-display tracking-tight text-slate-900 dark:text-white">
-              {mode === 'signin'
-                ? 'Admin Sign In'
-                : mode === 'forgot'
-                  ? 'Forgot Password'
-                  : 'Set New Password'}
+              Admin Sign In
             </h1>
-            <p className="text-xs font-mono text-slate-500 dark:text-slate-400 mt-1">
-              {mode === 'signin'
-                ? 'Sign in with an administrator account.'
-                : mode === 'forgot'
-                  ? 'Enter your email address or username and we will send a magic link to set a new password.'
-                  : verifiedAccount
-                    ? `Setting new password for ${verifiedAccount.username} (${verifiedAccount.email})`
-                    : 'Verify your magic link to choose a new password.'}
-            </p>
           </div>
-
-          {currentNonAdminUsername && mode === 'signin' && (
-            <div className="px-3.5 py-3 rounded-xl border border-amber-500/35 bg-amber-500/10 text-xs font-mono text-amber-700 dark:text-amber-300">
-             Sign in with an Admin account <code>/admin</code>.
-            </div>
-          )}
-
-          {successMsg && (
-            <div className="px-3.5 py-3 rounded-xl border border-emerald-500/35 bg-emerald-500/10 text-xs font-mono text-emerald-700 dark:text-emerald-300">
-              {successMsg}
-            </div>
-          )}
 
           {error && (
             <div className="px-3.5 py-3 rounded-xl border border-rose-500/35 bg-rose-500/10 text-xs font-mono text-rose-700 dark:text-rose-300">
@@ -3125,235 +2954,58 @@ export const AdminLoginView: React.FC<AdminLoginViewProps> = ({
             </div>
           )}
 
-          {mode === 'forgot' && magicLinkSentInfo ? (
-            <div className="space-y-4">
-              <div className="rounded-xl border border-emerald-500/35 bg-emerald-500/10 p-4 space-y-3">
-                <div className="flex items-start gap-2.5">
-                  <Mail className="w-4 h-4 text-emerald-500 shrink-0 mt-0.5" />
-                  <div className="text-xs font-mono text-emerald-800 dark:text-emerald-200 leading-relaxed">
-                    {magicLinkSentInfo.message}
-                  </div>
-                </div>
-
-                {magicLinkSentInfo.magicLink && (
-                  <a
-                    href={magicLinkSentInfo.magicLink}
-                    onClick={(e) => {
-                      if (onNavigateUrl && !e.metaKey && !e.ctrlKey && !e.shiftKey && !e.altKey) {
-                        e.preventDefault();
-                        const u = new URL(magicLinkSentInfo.magicLink!);
-                        onNavigateUrl(`${u.pathname}${u.search}`);
-                      }
-                    }}
-                    className="w-full py-2.5 px-3.5 rounded-lg bg-emerald-500 text-slate-950 text-xs font-mono font-bold inline-flex items-center justify-center gap-1.5 hover:opacity-95 transition-opacity"
-                  >
-                    <span>Open Magic Link to Set New Password</span>
-                    <ArrowRight className="w-3.5 h-3.5" />
-                  </a>
-                )}
-              </div>
-
-              <button
-                type="button"
-                onClick={() => {
-                  setMode('signin');
-                  setMagicLinkSentInfo(null);
-                  setError(null);
-                }}
-                className="w-full text-center text-xs font-mono text-slate-500 hover:text-slate-900 dark:hover:text-white cursor-pointer"
-              >
-                ← Back to Sign In
-              </button>
+          <form onSubmit={handleSubmit} className="space-y-4">
+            <div>
+              <label className="block text-xs font-mono text-slate-500 dark:text-slate-400 mb-1.5">
+                Admin Username or Email
+              </label>
+              <input
+                type="text"
+                required
+                value={identifier}
+                onChange={(e) => setIdentifier(e.target.value)}
+                placeholder="Enter admin username or email"
+                className="w-full px-3.5 py-2.5 rounded-lg border border-slate-300 dark:border-white/10 bg-slate-50 dark:bg-[#131822] text-sm font-mono text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-cyan-500"
+              />
             </div>
-          ) : mode === 'new_password' ? (
-            <div className="space-y-4">
-              {verifyingToken ? (
-                <div className="py-6 text-center text-xs font-mono text-slate-500">
-                  Verifying magic link...
-                </div>
-              ) : verifiedAccount ? (
-                <form onSubmit={handleSubmit} className="space-y-4">
-                  <div>
-                    <label className="block text-xs font-mono text-slate-500 dark:text-slate-400 mb-1.5">
-                      New Password
-                    </label>
-                    <div className="relative">
-                      <input
-                        type={showNewPassword ? 'text' : 'password'}
-                        required
-                        value={newPassword}
-                        onChange={(e) => setNewPassword(e.target.value)}
-                        placeholder="Min 4 characters"
-                        className="w-full pl-3.5 pr-11 py-2.5 rounded-lg border border-slate-300 dark:border-white/10 bg-slate-50 dark:bg-[#131822] text-sm font-mono text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-cyan-500"
-                      />
-                      <button
-                        type="button"
-                        onClick={() => setShowNewPassword((v) => !v)}
-                        aria-label={showNewPassword ? 'Hide password' : 'Show password'}
-                        title={showNewPassword ? 'Hide password' : 'Show password'}
-                        className="absolute right-2 top-1/2 -translate-y-1/2 p-1.5 rounded-md text-slate-500 hover:text-slate-800 dark:hover:text-slate-200 cursor-pointer"
-                      >
-                        {showNewPassword ? (
-                          <EyeOff className="w-4 h-4" />
-                        ) : (
-                          <Eye className="w-4 h-4" />
-                        )}
-                      </button>
-                    </div>
-                  </div>
 
-                  <div>
-                    <label className="block text-xs font-mono text-slate-500 dark:text-slate-400 mb-1.5">
-                      Confirm New Password
-                    </label>
-                    <div className="relative">
-                      <input
-                        type={showConfirmPassword ? 'text' : 'password'}
-                        required
-                        value={confirmPassword}
-                        onChange={(e) => setConfirmPassword(e.target.value)}
-                        placeholder="Re-enter new password"
-                        className="w-full pl-3.5 pr-11 py-2.5 rounded-lg border border-slate-300 dark:border-white/10 bg-slate-50 dark:bg-[#131822] text-sm font-mono text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-cyan-500"
-                      />
-                      <button
-                        type="button"
-                        onClick={() => setShowConfirmPassword((v) => !v)}
-                        aria-label={showConfirmPassword ? 'Hide password' : 'Show password'}
-                        title={showConfirmPassword ? 'Hide password' : 'Show password'}
-                        className="absolute right-2 top-1/2 -translate-y-1/2 p-1.5 rounded-md text-slate-500 hover:text-slate-800 dark:hover:text-slate-200 cursor-pointer"
-                      >
-                        {showConfirmPassword ? (
-                          <EyeOff className="w-4 h-4" />
-                        ) : (
-                          <Eye className="w-4 h-4" />
-                        )}
-                      </button>
-                    </div>
-                  </div>
-
-                  <button
-                    type="submit"
-                    disabled={loading}
-                    className="w-full py-3 px-4 rounded-xl bg-gradient-to-r from-cyan-400 via-sky-400 to-indigo-400 text-slate-950 font-display font-extrabold text-sm hover:opacity-95 disabled:opacity-50 cursor-pointer"
-                  >
-                    {loading ? 'Saving Password...' : 'Save New Password'}
-                  </button>
-                </form>
-              ) : (
-                <button
-                  type="button"
-                  onClick={() => {
-                    onClearResetToken?.();
-                    setError(null);
-                    setMode('forgot');
-                  }}
-                  className="w-full py-3 px-4 rounded-xl bg-cyan-400 text-slate-950 font-display font-extrabold text-sm hover:opacity-95 cursor-pointer"
-                >
-                  Request a New Magic Link
-                </button>
-              )}
-
-              <button
-                type="button"
-                onClick={() => {
-                  onClearResetToken?.();
-                  setMode('signin');
-                  setError(null);
-                }}
-                className="w-full text-center text-xs font-mono text-slate-500 hover:text-slate-900 dark:hover:text-white cursor-pointer"
-              >
-                ← Back to Sign In
-              </button>
-            </div>
-          ) : (
-            <form onSubmit={handleSubmit} className="space-y-4">
-              <div>
-                <label className="block text-xs font-mono text-slate-500 dark:text-slate-400 mb-1.5">
-                  {mode === 'forgot' ? 'Email Address or Username' : 'Admin Username or Email'}
-                </label>
+            <div>
+              <label className="block text-xs font-mono text-slate-500 dark:text-slate-400 mb-1.5">
+                Password
+              </label>
+              <div className="relative">
                 <input
-                  type="text"
+                  type={showPassword ? 'text' : 'password'}
                   required
-                  value={identifier}
-                  onChange={(e) => setIdentifier(e.target.value)}
-                  placeholder="Enter admin username or email"
-                  className="w-full px-3.5 py-2.5 rounded-lg border border-slate-300 dark:border-white/10 bg-slate-50 dark:bg-[#131822] text-sm font-mono text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-cyan-500"
+                  value={password}
+                  onChange={(e) => setPassword(e.target.value)}
+                  placeholder="••••••••••••"
+                  className="w-full pl-3.5 pr-11 py-2.5 rounded-lg border border-slate-300 dark:border-white/10 bg-slate-50 dark:bg-[#131822] text-sm font-mono text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-cyan-500"
                 />
-              </div>
-
-              {mode === 'signin' && (
-                <div>
-                  <div className="flex items-center justify-between mb-1.5">
-                    <label className="block text-xs font-mono text-slate-500 dark:text-slate-400">
-                      Password
-                    </label>
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setMode('forgot');
-                        setError(null);
-                        setSuccessMsg(null);
-                        setMagicLinkSentInfo(null);
-                      }}
-                      className="text-xs font-mono text-cyan-600 dark:text-cyan-400 hover:underline cursor-pointer"
-                    >
-                      Forgot Password?
-                    </button>
-                  </div>
-                  <div className="relative">
-                    <input
-                      type={showPassword ? 'text' : 'password'}
-                      required
-                      value={password}
-                      onChange={(e) => setPassword(e.target.value)}
-                      placeholder="••••••••••••"
-                      className="w-full pl-3.5 pr-11 py-2.5 rounded-lg border border-slate-300 dark:border-white/10 bg-slate-50 dark:bg-[#131822] text-sm font-mono text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-cyan-500"
-                    />
-                    <button
-                      type="button"
-                      onClick={() => setShowPassword((v) => !v)}
-                      aria-label={showPassword ? 'Hide password' : 'Show password'}
-                      title={showPassword ? 'Hide password' : 'Show password'}
-                      className="absolute right-2 top-1/2 -translate-y-1/2 p-1.5 rounded-md text-slate-500 hover:text-slate-800 dark:hover:text-slate-200 cursor-pointer"
-                    >
-                      {showPassword ? (
-                        <EyeOff className="w-4 h-4" />
-                      ) : (
-                        <Eye className="w-4 h-4" />
-                      )}
-                    </button>
-                  </div>
-                </div>
-              )}
-
-              <button
-                type="submit"
-                disabled={loading}
-                className="w-full py-3 px-4 rounded-xl bg-gradient-to-r from-cyan-400 via-sky-400 to-indigo-400 text-slate-950 font-display font-extrabold text-sm hover:opacity-95 disabled:opacity-50 cursor-pointer"
-              >
-                {loading
-                  ? mode === 'signin'
-                    ? 'Signing in...'
-                    : 'Sending Magic Link...'
-                  : mode === 'signin'
-                    ? 'Open Admin Dashboard'
-                    : 'Send Magic Link'}
-              </button>
-
-              {mode === 'forgot' && (
                 <button
                   type="button"
-                  onClick={() => {
-                    setMode('signin');
-                    setError(null);
-                  }}
-                  className="w-full text-center text-xs font-mono text-slate-500 hover:text-slate-900 dark:hover:text-white cursor-pointer"
+                  onClick={() => setShowPassword((v) => !v)}
+                  aria-label={showPassword ? 'Hide password' : 'Show password'}
+                  title={showPassword ? 'Hide password' : 'Show password'}
+                  className="absolute right-2 top-1/2 -translate-y-1/2 p-1.5 rounded-md text-slate-500 hover:text-slate-800 dark:hover:text-slate-200 cursor-pointer"
                 >
-                  ← Back to Sign In
+                  {showPassword ? (
+                    <EyeOff className="w-4 h-4" />
+                  ) : (
+                    <Eye className="w-4 h-4" />
+                  )}
                 </button>
-              )}
-            </form>
-          )}
+              </div>
+            </div>
+
+            <button
+              type="submit"
+              disabled={loading}
+              className="w-full py-3 px-4 rounded-xl bg-gradient-to-r from-cyan-400 via-sky-400 to-indigo-400 text-slate-950 font-display font-extrabold text-sm hover:opacity-95 disabled:opacity-50 cursor-pointer"
+            >
+              {loading ? 'Signing in...' : 'Open Admin Dashboard'}
+            </button>
+          </form>
 
           <div className="pt-2 border-t border-slate-100 dark:border-white/[0.07] text-center">
             <a

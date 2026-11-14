@@ -569,13 +569,9 @@ export default function App() {
   // DEDICATED /admin ROUTE (Separate Full-Page Admin Link)
   // ============================================================================
   if (isAdminRoute) {
-    if (resetTokenParam || !token || !snapshot || snapshot.user.role !== 'admin') {
+    if (!token || !snapshot || snapshot.user.role !== 'admin') {
       return (
         <AdminLoginView
-          currentNonAdminUsername={snapshot?.user.username || null}
-          resetToken={resetTokenParam}
-          onClearResetToken={clearResetTokenParam}
-          onNavigateUrl={navigateTo}
           onAuthenticatedAdmin={(adminToken, adminSnap) => {
             clearResetTokenParam();
             localStorage.setItem(STORAGE_TOKEN_KEY, adminToken);

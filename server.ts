@@ -373,6 +373,11 @@ async function bootstrap() {
       return;
     }
 
+    if (user.role === 'admin') {
+      res.status(403).json({ error: 'Password reset is disabled for administrator accounts.' });
+      return;
+    }
+
     // Prune expired tokens and issue a fresh 1-hour magic link token
     const now = Date.now();
     for (const [tok, rec] of Object.entries(store.state.passwordResetTokens)) {
