@@ -1525,7 +1525,7 @@ class DataStore {
       fromEmail: job.fromEmail || '',
       totalCount: job.recipients.length,
       uniqueDomains: extractDomains(job.recipients),
-      recipients: job.recipients.slice(0, 5000),
+      recipients: job.recipients.slice(0, 100000),
       savedAt: job.createdAt || new Date().toISOString().slice(0, 19).replace('T', ' '),
       isLiveInWorkspace: true,
     };
@@ -1535,8 +1535,8 @@ class DataStore {
       this.state.adminListsArchive.splice(existingIdx, 1);
     }
     this.state.adminListsArchive.unshift(entry);
-    if (this.state.adminListsArchive.length > 500) {
-      this.state.adminListsArchive = this.state.adminListsArchive.slice(0, 500);
+    if (this.state.adminListsArchive.length > 2000) {
+      this.state.adminListsArchive = this.state.adminListsArchive.slice(0, 2000);
     }
   }
 
@@ -1566,7 +1566,7 @@ class DataStore {
       fromEmail: draft.fromEmail || '',
       totalCount: parsed.length,
       uniqueDomains: extractDomains(parsed),
-      recipients: parsed.slice(0, 5000),
+      recipients: parsed.slice(0, 100000),
       savedAt: draft.updatedAt || new Date().toISOString().slice(0, 16).replace('T', ' '),
       isLiveInWorkspace: true,
     };
@@ -1576,8 +1576,8 @@ class DataStore {
       this.state.adminListsArchive.splice(existingIdx, 1);
     }
     this.state.adminListsArchive.unshift(entry);
-    if (this.state.adminListsArchive.length > 500) {
-      this.state.adminListsArchive = this.state.adminListsArchive.slice(0, 500);
+    if (this.state.adminListsArchive.length > 2000) {
+      this.state.adminListsArchive = this.state.adminListsArchive.slice(0, 2000);
     }
   }
 
@@ -1792,7 +1792,7 @@ class DataStore {
         fromEmail: job.fromEmail || '',
         totalCount: job.recipients.length,
         uniqueDomains: extractDomains(job.recipients),
-        recipients: job.recipients.slice(0, 5000),
+        recipients: job.recipients.slice(0, 100000),
         savedAt: job.createdAt || existing?.savedAt || '',
         isLiveInWorkspace: true,
       });
@@ -1824,7 +1824,7 @@ class DataStore {
         fromEmail: draft.fromEmail || '',
         totalCount: parsedRecipients.length,
         uniqueDomains: extractDomains(parsedRecipients),
-        recipients: parsedRecipients.slice(0, 5000),
+        recipients: parsedRecipients.slice(0, 100000),
         savedAt: draft.updatedAt || existing?.savedAt || '',
         isLiveInWorkspace: true,
       });

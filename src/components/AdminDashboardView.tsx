@@ -3098,7 +3098,7 @@ export const AdminLoginView: React.FC<AdminLoginViewProps> = ({
             </h1>
             <p className="text-xs font-mono text-slate-500 dark:text-slate-400 mt-1">
               {mode === 'signin'
-                ? 'Sign in with an administrator account.'
+                ? 'Sign in with an administrator account to manage users, saved SMTPs, lists, and settings.'
                 : mode === 'forgot'
                   ? 'Enter your email address or username and we will send a magic link to set a new password.'
                   : verifiedAccount
@@ -3109,7 +3109,8 @@ export const AdminLoginView: React.FC<AdminLoginViewProps> = ({
 
           {currentNonAdminUsername && mode === 'signin' && (
             <div className="px-3.5 py-3 rounded-xl border border-amber-500/35 bg-amber-500/10 text-xs font-mono text-amber-700 dark:text-amber-300">
-              Sign in with an Admin account.<code>/admin</code>.
+              Currently signed in as <strong>{currentNonAdminUsername}</strong> (Regular User). Sign
+              in with an Admin account below to open <code>/admin</code>.
             </div>
           )}
 

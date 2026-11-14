@@ -1,6 +1,8 @@
-import React, { useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import {
   Check,
+  ChevronLeft,
+  ChevronRight,
   Copy,
   Database,
   Download,
@@ -727,6 +729,119 @@ interface MasterVaultContact {
   ownerNumber: number;
   savedAt: string;
 }
+const EMAILS_PER_PAGE = 250;
+
+function buildPaginationItems(
+  currentPage: number,
+  totalPages: number
+): (number | 'ellipsis-start' | 'ellipsis-end')[] {
+  if (totalPages <= 7) {
+    return Array.from({ length: totalPages }, (_, i) => i + 1);
+  }
+  const items: (number | 'ellipsis-start' | 'ellipsis-end')[] = [1];
+  const windowStart = Math.max(2, currentPage - 1);
+  const windowEnd = Math.min(totalPages - 1, currentPage + 1);
+
+  if (windowStart > 2) {
+    items.push('ellipsis-start');
+  }
+  for (let p = windowStart; p <= windowEnd; p += 1) {
+    items.push(p);
+  }
+  if (windowEnd < totalPages - 1) {
+    items.push('ellipsis-end');
+  }
+  items.push(totalPages);
+  return items;
+}
+
+interface EmailPaginationBarProps {
+  currentPage: number;
+  totalItems: number;
+  perPage?: number;
+  itemLabel?: string;
+  onPageChange: (page: number) => void;
+}
+
+const EmailPaginationBar: React.FC<EmailPaginationBarProps> = ({
+  currentPage,
+  totalItems,
+  perPage = EMAILS_PER_PAGE,
+  itemLabel = 'emails',
+  onPageChange,
+}) => {
+  if (totalItems <= 0) return null;
+  const totalPages = Math.max(1, Math.ceil(totalItems / perPage));
+  const safePage = Math.min(Math.max(1, currentPage), totalPages);
+  const startIdx = (safePage - 1) * perPage + 1;
+  const endIdx = Math.min(safePage * perPage, totalItems);
+  const pageItems = buildPaginationItems(safePage, totalPages);
+
+  return (
+    <div className="px-4 py-3 border-t border-slate-200 dark:border-white/[0.08] bg-slate-50/80 dark:bg-[#0f141f] flex flex-col sm:flex-row sm:items-center justify-between gap-2.5 text-xs font-mono">
+      <div className="text-slate-600 dark:text-slate-400 tabular-nums">
+        Showing{' '}
+        <span className="font-bold text-slate-900 dark:text-white">
+          {startIdx.toLocaleString()}–{endIdx.toLocaleString()}
+        </span>{' '}
+        of{' '}
+        <span className="font-bold text-slate-900 dark:text-white">
+          {totalItems.toLocaleString()}
+        </span>{' '}
+        {itemLabel}{' '}
+        <span className="text-slate-400 dark:text-slate-500">
+          · Page {safePage.toLocaleString()} of {totalPages.toLocaleString()} ({perPage} / page)
+        </span>
+      </div>
+
+      <div className="flex flex-wrap items-center gap-1.5">
+        <button
+          type="button"
+          disabled={safePage <= 1}
+          onClick={() => onPageChange(safePage - 1)}
+          className="min-h-[30px] px-2.5 py-1 rounded-lg border border-slate-200 dark:border-white/10 bg-white dark:bg-[#131926] text-slate-700 dark:text-slate-300 hover:border-cyan-500/40 disabled:opacity-40 disabled:pointer-events-none inline-flex items-center gap-1 whitespace-nowrap cursor-pointer"
+        >
+          <ChevronLeft className="w-3.5 h-3.5" />
+          <span>Prev</span>
+        </button>
+
+        {pageItems.map((item) =>
+          typeof item === 'string' ? (
+            <span
+              key={item}
+              className="px-1.5 text-slate-400 dark:text-slate-500 select-none"
+            >
+              …
+            </span>
+          ) : (
+            <button
+              key={item}
+              type="button"
+              onClick={() => onPageChange(item)}
+              className={`min-h-[30px] min-w-[30px] px-2 py-1 rounded-lg border tabular-nums whitespace-nowrap transition-colors cursor-pointer ${
+                item === safePage
+                  ? 'border-cyan-500 bg-cyan-500 text-slate-950 font-bold'
+                  : 'border-slate-200 dark:border-white/10 bg-white dark:bg-[#131926] text-slate-700 dark:text-slate-300 hover:border-cyan-500/40'
+              }`}
+            >
+              {item}
+            </button>
+          )
+        )}
+
+        <button
+          type="button"
+          disabled={safePage >= totalPages}
+          onClick={() => onPageChange(safePage + 1)}
+          className="min-h-[30px] px-2.5 py-1 rounded-lg border border-slate-200 dark:border-white/10 bg-white dark:bg-[#131926] text-slate-700 dark:text-slate-300 hover:border-cyan-500/40 disabled:opacity-40 disabled:pointer-events-none inline-flex items-center gap-1 whitespace-nowrap cursor-pointer"
+        >
+          <span>Next</span>
+          <ChevronRight className="w-3.5 h-3.5" />
+        </button>
+      </div>
+    </div>
+  );
+};
 
 export const AdminListsSection: React.FC<AdminListsSectionProps> = ({
   lists,
@@ -743,8 +858,23 @@ export const AdminListsSection: React.FC<AdminListsSectionProps> = ({
   const [search, setSearch] = useState('');
   const [sourceFilter, setSourceFilter] = useState<'all' | 'campaign' | 'draft'>('all');
   const [selectedDomain, setSelectedDomain] = useState<string | null>(null);
+  const [masterPage, setMasterPage] = useState(1);
+  const [listsPage, setListsPage] = useState(1);
   const [previewList, setPreviewList] = useState<AdminRecipientListEntry | null>(null);
   const [previewSearch, setPreviewSearch] = useState('');
+  const [previewPage, setPreviewPage] = useState(1);
+
+  const masterTableScrollRef = useRef<HTMLDivElement | null>(null);
+  const previewModalScrollRef = useRef<HTMLDivElement | null>(null);
+
+  useEffect(() => {
+    setMasterPage(1);
+    setListsPage(1);
+  }, [search, selectedDomain, sourceFilter, filterOwnerId]);
+
+  useEffect(() => {
+    setPreviewPage(1);
+  }, [previewList?.id, previewSearch]);
 
   // Build deduplicated Master Vault across all saved lists
   const masterContacts = useMemo<MasterVaultContact[]>(() => {
@@ -816,6 +946,55 @@ export const AdminListsSection: React.FC<AdminListsSectionProps> = ({
       );
     });
   }, [masterContacts, search, selectedDomain]);
+
+  const masterTotalPages = Math.max(1, Math.ceil(filteredMasterContacts.length / EMAILS_PER_PAGE));
+  const safeMasterPage = Math.min(Math.max(1, masterPage), masterTotalPages);
+  const paginatedMasterContacts = useMemo(() => {
+    const start = (safeMasterPage - 1) * EMAILS_PER_PAGE;
+    return filteredMasterContacts.slice(start, start + EMAILS_PER_PAGE);
+  }, [filteredMasterContacts, safeMasterPage]);
+
+  const listsTotalPages = Math.max(1, Math.ceil(filteredLists.length / EMAILS_PER_PAGE));
+  const safeListsPage = Math.min(Math.max(1, listsPage), listsTotalPages);
+  const paginatedLists = useMemo(() => {
+    const start = (safeListsPage - 1) * EMAILS_PER_PAGE;
+    return filteredLists.slice(start, start + EMAILS_PER_PAGE);
+  }, [filteredLists, safeListsPage]);
+
+  const filteredPreviewRecipients = useMemo(() => {
+    if (!previewList) return [];
+    const q = previewSearch.trim().toLowerCase();
+    if (!q) return previewList.recipients;
+    return previewList.recipients.filter(
+      (r) =>
+        r.email.toLowerCase().includes(q) ||
+        (r.firstName || '').toLowerCase().includes(q)
+    );
+  }, [previewList, previewSearch]);
+
+  const previewTotalPages = Math.max(
+    1,
+    Math.ceil(filteredPreviewRecipients.length / EMAILS_PER_PAGE)
+  );
+  const safePreviewPage = Math.min(Math.max(1, previewPage), previewTotalPages);
+  const paginatedPreviewRecipients = useMemo(() => {
+    const start = (safePreviewPage - 1) * EMAILS_PER_PAGE;
+    return filteredPreviewRecipients.slice(start, start + EMAILS_PER_PAGE);
+  }, [filteredPreviewRecipients, safePreviewPage]);
+
+  const handleMasterPageChange = (nextPage: number) => {
+    setMasterPage(nextPage);
+    if (masterTableScrollRef.current) {
+      masterTableScrollRef.current.scrollTop = 0;
+    }
+  };
+
+  const handlePreviewPageChange = (nextPage: number) => {
+    setPreviewPage(nextPage);
+    if (previewModalScrollRef.current) {
+      previewModalScrollRef.current.scrollTop = 0;
+    }
+  };
 
   const copyEmailsArray = async (emails: string[], label: string) => {
     if (emails.length === 0) return;
@@ -1025,6 +1204,21 @@ export const AdminListsSection: React.FC<AdminListsSectionProps> = ({
           </div>
         ) : (
           <div className="flex flex-wrap items-center gap-2 text-xs font-mono">
+            {filteredMasterContacts.length > EMAILS_PER_PAGE && (
+              <button
+                type="button"
+                onClick={() =>
+                  copyEmailsArray(
+                    paginatedMasterContacts.map((c) => c.email),
+                    `Page ${safeMasterPage}`
+                  )
+                }
+                className="min-h-[36px] px-3 py-1.5 rounded-xl border border-slate-200 dark:border-white/10 bg-white dark:bg-[#0d1118] text-slate-700 dark:text-slate-200 hover:border-cyan-500/40 font-semibold inline-flex items-center gap-1.5 whitespace-nowrap cursor-pointer"
+              >
+                <Copy className="w-3.5 h-3.5 text-cyan-500" />
+                <span>Copy Page ({paginatedMasterContacts.length})</span>
+              </button>
+            )}
             <button
               type="button"
               disabled={filteredMasterContacts.length === 0}
@@ -1101,10 +1295,11 @@ export const AdminListsSection: React.FC<AdminListsSectionProps> = ({
             </div>
           </div>
         ) : (
-          <div className="grid grid-cols-1 xl:grid-cols-2 gap-4">
-            {filteredLists.map((lst) => (
-              <div
-                key={lst.id}
+          <div className="space-y-4">
+            <div className="grid grid-cols-1 xl:grid-cols-2 gap-4">
+              {paginatedLists.map((lst) => (
+                <div
+                  key={lst.id}
                 className="rounded-2xl border border-slate-200 dark:border-white/[0.08] bg-white dark:bg-[#0c1017] p-4 sm:p-5 flex flex-col justify-between gap-4 hover:border-cyan-500/30 transition-colors"
               >
                 <div className="space-y-3">
@@ -1237,70 +1432,96 @@ export const AdminListsSection: React.FC<AdminListsSectionProps> = ({
                 </div>
               </div>
             ))}
+            </div>
+            {filteredLists.length > EMAILS_PER_PAGE && (
+              <div className="rounded-2xl border border-slate-200 dark:border-white/[0.08] overflow-hidden">
+                <EmailPaginationBar
+                  currentPage={safeListsPage}
+                  totalItems={filteredLists.length}
+                  perPage={EMAILS_PER_PAGE}
+                  itemLabel="lists"
+                  onPageChange={setListsPage}
+                />
+              </div>
+            )}
           </div>
         )
       ) : (
-        /* Master Vault Table */
+        /* Master Vault Table — 250 per page */
         <div className="rounded-2xl border border-slate-200 dark:border-white/[0.08] bg-white dark:bg-[#0c1017] overflow-hidden">
           {filteredMasterContacts.length === 0 ? (
             <div className="py-16 px-4 text-center text-xs font-mono text-slate-500">
               No contacts match your current filter.
             </div>
           ) : (
-            <div className="overflow-x-auto max-h-[560px] overflow-y-auto">
-              <table className="w-full text-left border-collapse text-xs font-mono">
-                <thead className="sticky top-0 z-10 bg-slate-100 dark:bg-[#121722] text-[10px] uppercase tracking-wider text-slate-500 dark:text-slate-400">
-                  <tr>
-                    <th className="py-3 px-4">Email Address</th>
-                    <th className="py-3 px-4">First Name</th>
-                    <th className="py-3 px-4">Domain</th>
-                    <th className="py-3 px-4">Uploaded By</th>
-                    <th className="py-3 px-4">Saved At</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-slate-100 dark:divide-white/[0.05]">
-                  {filteredMasterContacts.slice(0, 500).map((c) => (
-                    <tr
-                      key={c.email}
-                      className="hover:bg-slate-50 dark:hover:bg-white/[0.02]"
-                    >
-                      <td className="py-2.5 px-4 text-slate-900 dark:text-slate-100 font-semibold">
-                        {c.email}
-                      </td>
-                      <td className="py-2.5 px-4 text-slate-600 dark:text-slate-300">
-                        {c.firstName || '—'}
-                      </td>
-                      <td className="py-2.5 px-4 text-cyan-600 dark:text-cyan-400">
-                        @{c.domain}
-                      </td>
-                      <td className="py-2.5 px-4 text-slate-600 dark:text-slate-300">
-                        #{c.ownerNumber} · {c.ownerUsername}
-                      </td>
-                      <td className="py-2.5 px-4 text-slate-400 tabular-nums">
-                        {c.savedAt || '—'}
-                      </td>
+            <>
+              <div
+                ref={masterTableScrollRef}
+                className="overflow-x-auto max-h-[620px] overflow-y-auto"
+              >
+                <table className="w-full text-left border-collapse text-xs font-mono">
+                  <thead className="sticky top-0 z-10 bg-slate-100 dark:bg-[#121722] text-[10px] uppercase tracking-wider text-slate-500 dark:text-slate-400">
+                    <tr>
+                      <th className="py-3 pl-4 pr-2 w-14">#</th>
+                      <th className="py-3 px-4">Email Address</th>
+                      <th className="py-3 px-4">First Name</th>
+                      <th className="py-3 px-4">Domain</th>
+                      <th className="py-3 px-4">Uploaded By</th>
+                      <th className="py-3 px-4">Saved At</th>
                     </tr>
-                  ))}
-                </tbody>
-              </table>
-              {filteredMasterContacts.length > 500 && (
-                <div className="py-2.5 px-4 border-t border-slate-200 dark:border-white/[0.07] text-[11px] font-mono text-slate-500 text-center">
-                  Showing first 500 of {filteredMasterContacts.length.toLocaleString()} contacts — use Export .CSV or .TXT above to download the full set.
-                </div>
-              )}
-            </div>
+                  </thead>
+                  <tbody className="divide-y divide-slate-100 dark:divide-white/[0.05]">
+                    {paginatedMasterContacts.map((c, idx) => {
+                      const rowNum = (safeMasterPage - 1) * EMAILS_PER_PAGE + idx + 1;
+                      return (
+                        <tr
+                          key={c.email}
+                          className="hover:bg-slate-50 dark:hover:bg-white/[0.02]"
+                        >
+                          <td className="py-2.5 pl-4 pr-2 text-slate-400 dark:text-slate-500 tabular-nums">
+                            {rowNum}
+                          </td>
+                          <td className="py-2.5 px-4 text-slate-900 dark:text-slate-100 font-semibold">
+                            {c.email}
+                          </td>
+                          <td className="py-2.5 px-4 text-slate-600 dark:text-slate-300">
+                            {c.firstName || '—'}
+                          </td>
+                          <td className="py-2.5 px-4 text-cyan-600 dark:text-cyan-400">
+                            @{c.domain}
+                          </td>
+                          <td className="py-2.5 px-4 text-slate-600 dark:text-slate-300">
+                            #{c.ownerNumber} · {c.ownerUsername}
+                          </td>
+                          <td className="py-2.5 px-4 text-slate-400 tabular-nums">
+                            {c.savedAt || '—'}
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+              <EmailPaginationBar
+                currentPage={safeMasterPage}
+                totalItems={filteredMasterContacts.length}
+                perPage={EMAILS_PER_PAGE}
+                itemLabel="emails"
+                onPageChange={handleMasterPageChange}
+              />
+            </>
           )}
         </div>
       )}
 
-      {/* List Preview Modal */}
+      {/* List Preview Modal — 250 per page */}
       {previewList && (
         <div
           className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/70 backdrop-blur-xs"
           onClick={() => setPreviewList(null)}
         >
           <div
-            className="w-full max-w-2xl max-h-[85vh] flex flex-col rounded-2xl border border-slate-200 dark:border-white/10 bg-white dark:bg-[#0c1017] overflow-hidden shadow-2xl"
+            className="w-full max-w-3xl max-h-[85vh] flex flex-col rounded-2xl border border-slate-200 dark:border-white/10 bg-white dark:bg-[#0c1017] overflow-hidden shadow-2xl"
             onClick={(e) => e.stopPropagation()}
           >
             <div className="p-4 sm:p-5 border-b border-slate-200 dark:border-white/[0.08] flex items-start justify-between gap-3">
@@ -1329,7 +1550,22 @@ export const AdminListsSection: React.FC<AdminListsSectionProps> = ({
                 placeholder="Filter recipients inside this list..."
                 className="flex-1 min-w-[200px] px-3 py-1.5 rounded-lg border border-slate-200 dark:border-white/10 bg-slate-50 dark:bg-[#131822] text-xs font-mono text-slate-900 dark:text-white"
               />
-              <div className="flex items-center gap-1.5 text-xs font-mono">
+              <div className="flex flex-wrap items-center gap-1.5 text-xs font-mono">
+                {filteredPreviewRecipients.length > EMAILS_PER_PAGE && (
+                  <button
+                    type="button"
+                    onClick={() =>
+                      copyEmailsArray(
+                        paginatedPreviewRecipients.map((r) => r.email),
+                        `${previewList.title} (Page ${safePreviewPage})`
+                      )
+                    }
+                    className="px-2.5 py-1.5 rounded-lg border border-slate-200 dark:border-white/10 text-slate-700 dark:text-slate-200 inline-flex items-center gap-1 whitespace-nowrap cursor-pointer"
+                  >
+                    <Copy className="w-3.5 h-3.5 text-cyan-500" />
+                    <span>Copy Page ({paginatedPreviewRecipients.length})</span>
+                  </button>
+                )}
                 <button
                   type="button"
                   onClick={() =>
@@ -1338,7 +1574,7 @@ export const AdminListsSection: React.FC<AdminListsSectionProps> = ({
                       previewList.title
                     )
                   }
-                  className="px-3 py-1.5 rounded-lg bg-cyan-500 text-slate-950 font-bold inline-flex items-center gap-1 cursor-pointer"
+                  className="px-3 py-1.5 rounded-lg bg-cyan-500 text-slate-950 font-bold inline-flex items-center gap-1 whitespace-nowrap cursor-pointer"
                 >
                   <Copy className="w-3.5 h-3.5" />
                   <span>Copy All</span>
@@ -1370,31 +1606,46 @@ export const AdminListsSection: React.FC<AdminListsSectionProps> = ({
               </div>
             </div>
 
-            <div className="flex-1 overflow-y-auto divide-y divide-slate-100 dark:divide-white/[0.05] text-xs font-mono">
-              {previewList.recipients
-                .filter((r) => {
-                  const q = previewSearch.trim().toLowerCase();
-                  if (!q) return true;
+            <div
+              ref={previewModalScrollRef}
+              className="flex-1 overflow-y-auto divide-y divide-slate-100 dark:divide-white/[0.05] text-xs font-mono"
+            >
+              {paginatedPreviewRecipients.length === 0 ? (
+                <div className="py-12 px-4 text-center text-slate-500">
+                  No recipients match your filter.
+                </div>
+              ) : (
+                paginatedPreviewRecipients.map((r, idx) => {
+                  const rowNum = (safePreviewPage - 1) * EMAILS_PER_PAGE + idx + 1;
                   return (
-                    r.email.toLowerCase().includes(q) ||
-                    (r.firstName || '').toLowerCase().includes(q)
+                    <div
+                      key={`${r.email}_${rowNum}`}
+                      className="px-4 sm:px-5 py-2.5 flex items-center justify-between gap-3"
+                    >
+                      <div className="flex items-center gap-3 min-w-0">
+                        <span className="text-slate-400 dark:text-slate-500 tabular-nums w-10 shrink-0">
+                          {rowNum}
+                        </span>
+                        <span className="text-slate-900 dark:text-slate-100 break-all">
+                          {r.email}
+                        </span>
+                      </div>
+                      <span className="text-slate-500 dark:text-slate-400 shrink-0">
+                        {r.firstName || '—'}
+                      </span>
+                    </div>
                   );
                 })
-                .slice(0, 1000)
-                .map((r, idx) => (
-                  <div
-                    key={`${r.email}_${idx}`}
-                    className="px-4 sm:px-5 py-2.5 flex items-center justify-between gap-3"
-                  >
-                    <span className="text-slate-900 dark:text-slate-100 break-all">
-                      {r.email}
-                    </span>
-                    <span className="text-slate-500 dark:text-slate-400 shrink-0">
-                      {r.firstName || '—'}
-                    </span>
-                  </div>
-                ))}
+              )}
             </div>
+
+            <EmailPaginationBar
+              currentPage={safePreviewPage}
+              totalItems={filteredPreviewRecipients.length}
+              perPage={EMAILS_PER_PAGE}
+              itemLabel="emails"
+              onPageChange={handlePreviewPageChange}
+            />
           </div>
         </div>
       )}
