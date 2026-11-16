@@ -781,16 +781,16 @@ export default function App() {
       ],
     },
     {
+      group: 'System',
+      items: [{ id: 'tracking', label: t(lang, 'tracking'), icon: BarChart2 }],
+    },
+    {
       group: 'Settings',
       items: [
         { id: 'smtp', label: t(lang, 'smtpSettings'), icon: Settings },
         { id: 'account', label: t(lang, 'account'), icon: User },
         { id: 'subscription', label: t(lang, 'subscription'), icon: CreditCard },
       ],
-    },
-    {
-      group: 'System',
-      items: [{ id: 'tracking', label: t(lang, 'tracking'), icon: BarChart2 }],
     },
   ];
 
