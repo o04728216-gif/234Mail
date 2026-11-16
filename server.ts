@@ -28,14 +28,18 @@ import {
   verifySmtpConnection,
 } from './server/smtpService.ts';
 import {
+  applySubscriptionDays,
   canUserCreateCampaign,
   canUserDispatchQueuedJobs,
   hashApiKey,
   hashPassword,
   isUserFreeTrial,
   isUserPaidAndActive,
+  parseExpirationDateToMs,
+  SUBSCRIPTION_DAY_MS,
   store,
   syncUserActiveRevenue,
+  syncUserSubscriptionCountdown,
   type StoredJob,
   type StoredSmtpNode,
   type StoredUser,
@@ -87,6 +91,7 @@ function requireAuth(req: AuthenticatedRequest, res: Response, next: NextFunctio
     res.status(401).json({ error: 'Invalid or expired session' });
     return;
   }
+  store.refreshUserSubscription(user);
   req.user = user;
   next();
 }
@@ -244,6 +249,21 @@ async function bootstrap() {
   };
 
   queueWorker.start(broadcast);
+
+  // Live subscription countdown ticker (checks every 30s and broadcasts any day/expiry change)
+  setInterval(() => {
+    const changedUsers = store.refreshAllSubscriptions();
+    if (changedUsers.length > 0) {
+      for (const u of changedUsers) {
+        broadcast('user:updated', store.sanitizeUser(u), u.id);
+      }
+      const sortedPublic = store.state.users
+        .slice()
+        .sort((a, b) => (b.userNumber || 0) - (a.userNumber || 0))
+        .map((u) => store.sanitizeUser(u));
+      broadcast('users:updated', sortedPublic);
+    }
+  }, 30_000);
 
   // ============================================================================
   // AUTHENTICATION ROUTES
@@ -641,6 +661,9 @@ async function bootstrap() {
         options?: Partial<UserOptions>;
       };
 
+      const nowMs = Date.now();
+      syncUserSubscriptionCountdown(target, nowMs);
+
       const ps = store.state.platformSettings;
       const planDays = Math.max(1, ps.planDurationDays || 30);
       const price = Math.max(1, ps.monthlyPriceUsd || 20);
@@ -649,11 +672,18 @@ async function bootstrap() {
         const addDays =
           typeof body.daysToAdd === 'number' && body.daysToAdd > 0 ? body.daysToAdd : planDays;
         const isAlreadyPaidActive = isUserPaidAndActive(target);
-        const baseDays = isAlreadyPaidActive ? target.daysLeft : 0;
-        target.daysLeft = baseDays + addDays;
-        const exp = new Date();
-        exp.setDate(exp.getDate() + target.daysLeft);
-        target.expiresAt = exp.toISOString().slice(0, 10);
+        const currentEndMs =
+          isAlreadyPaidActive &&
+          typeof target.subscriptionEndsAt === 'number' &&
+          target.subscriptionEndsAt > nowMs
+            ? target.subscriptionEndsAt
+            : isAlreadyPaidActive && target.daysLeft > 0
+              ? nowMs + target.daysLeft * SUBSCRIPTION_DAY_MS
+              : nowMs;
+        const nextEndMs = currentEndMs + addDays * SUBSCRIPTION_DAY_MS;
+        target.subscriptionEndsAt = nextEndMs;
+        target.daysLeft = Math.max(1, Math.ceil((nextEndMs - nowMs) / SUBSCRIPTION_DAY_MS));
+        target.expiresAt = new Date(nextEndMs).toISOString().slice(0, 10);
         target.subscriptionStatus = 'active';
         target.planName = `Monthly — $${price} USDT`;
         target.paymentsCount = (target.paymentsCount || 0) + 1;
@@ -661,13 +691,16 @@ async function bootstrap() {
       } else if (body.action === 'suspend') {
         target.subscriptionStatus = 'suspended';
         target.daysLeft = 0;
+        target.subscriptionEndsAt = undefined;
         target.paymentsCount = 0;
         target.totalPaidUsd = 0;
       } else if (body.action === 'expire') {
         target.subscriptionStatus = 'expired';
         target.daysLeft = 0;
+        target.subscriptionEndsAt = undefined;
       }
 
+      const prevStatusBeforeEdit = target.subscriptionStatus;
       if (
         body.subscriptionStatus === 'active' ||
         body.subscriptionStatus === 'pending' ||
@@ -679,10 +712,16 @@ async function bootstrap() {
           target.planName = 'Free Trial';
           target.paymentsCount = 0;
           target.totalPaidUsd = 0;
+          if (typeof body.daysLeft !== 'number' || body.daysLeft <= 0) {
+            target.daysLeft = 0;
+            target.subscriptionEndsAt = undefined;
+            target.expiresAt = '';
+          }
         } else if (body.subscriptionStatus === 'active') {
           target.planName = `Monthly — $${price} USDT`;
         } else if (typeof body.daysLeft !== 'number') {
           target.daysLeft = 0;
+          target.subscriptionEndsAt = undefined;
           if (body.subscriptionStatus === 'suspended') {
             target.paymentsCount = 0;
             target.totalPaidUsd = 0;
@@ -691,11 +730,20 @@ async function bootstrap() {
       }
 
       if (typeof body.daysLeft === 'number') {
-        target.daysLeft = Math.max(0, Math.round(body.daysLeft));
-        if (target.daysLeft > 0) {
-          const exp = new Date();
-          exp.setDate(exp.getDate() + target.daysLeft);
-          target.expiresAt = exp.toISOString().slice(0, 10);
+        const cleanDays = Math.max(0, Math.round(body.daysLeft));
+        const daysChanged = cleanDays !== target.daysLeft;
+        const statusChangedToActive =
+          target.subscriptionStatus === 'active' && prevStatusBeforeEdit !== 'active';
+
+        if (cleanDays > 0) {
+          if (
+            daysChanged ||
+            statusChangedToActive ||
+            !target.subscriptionEndsAt ||
+            target.subscriptionEndsAt <= nowMs
+          ) {
+            applySubscriptionDays(target, cleanDays, nowMs);
+          }
           if (target.subscriptionStatus === 'pending') {
             target.planName = 'Free Trial';
             target.paymentsCount = 0;
@@ -707,15 +755,22 @@ async function bootstrap() {
               target.paymentsCount = Math.max(1, Math.ceil(target.daysLeft / planDays));
             }
           }
-        } else if (target.subscriptionStatus === 'active') {
-          target.subscriptionStatus = 'expired';
-        } else if (target.subscriptionStatus === 'pending') {
-          target.expiresAt = '';
+        } else {
+          target.daysLeft = 0;
+          target.subscriptionEndsAt = undefined;
+          if (target.subscriptionStatus === 'active' && target.role !== 'admin') {
+            target.subscriptionStatus = 'expired';
+          } else if (target.subscriptionStatus === 'pending') {
+            target.expiresAt = '';
+          }
         }
       }
 
-      if (typeof body.expiresAt === 'string') {
+      if (typeof body.expiresAt === 'string' && body.expiresAt !== target.expiresAt) {
         target.expiresAt = body.expiresAt;
+        const parsedMs = parseExpirationDateToMs(body.expiresAt);
+        target.subscriptionEndsAt = parsedMs ?? undefined;
+        syncUserSubscriptionCountdown(target, nowMs);
       }
 
       if (body.role === 'admin' || body.role === 'manager' || body.role === 'analyst') {
@@ -2158,15 +2213,25 @@ async function bootstrap() {
       return;
     }
 
+    const nowMs = Date.now();
     const ps = store.state.platformSettings;
     const user = req.user!;
-    const isAlreadyPaidActive = isUserPaidAndActive(user);
-    const baseDays = isAlreadyPaidActive ? user.daysLeft : 0;
-    user.daysLeft = baseDays + ps.planDurationDays;
+    syncUserSubscriptionCountdown(user, nowMs);
 
-    const nextDate = new Date();
-    nextDate.setDate(nextDate.getDate() + user.daysLeft);
-    user.expiresAt = nextDate.toISOString().slice(0, 10);
+    const addDays = Math.max(1, ps.planDurationDays || 30);
+    const isAlreadyPaidActive = isUserPaidAndActive(user);
+    const currentEndMs =
+      isAlreadyPaidActive &&
+      typeof user.subscriptionEndsAt === 'number' &&
+      user.subscriptionEndsAt > nowMs
+        ? user.subscriptionEndsAt
+        : isAlreadyPaidActive && user.daysLeft > 0
+          ? nowMs + user.daysLeft * SUBSCRIPTION_DAY_MS
+          : nowMs;
+    const nextEndMs = currentEndMs + addDays * SUBSCRIPTION_DAY_MS;
+    user.subscriptionEndsAt = nextEndMs;
+    user.daysLeft = Math.max(1, Math.ceil((nextEndMs - nowMs) / SUBSCRIPTION_DAY_MS));
+    user.expiresAt = new Date(nextEndMs).toISOString().slice(0, 10);
     user.subscriptionStatus = 'active';
     user.planName = `Monthly — $${ps.monthlyPriceUsd} USDT`;
     user.paymentsCount = (user.paymentsCount || 0) + 1;

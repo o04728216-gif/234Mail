@@ -51,6 +51,12 @@ export const OverviewView: React.FC<OverviewViewProps> = ({ snapshot, lang, onNa
     user.subscriptionStatus !== 'expired' &&
     user.subscriptionStatus !== 'suspended';
   const isTrialLimitReached = isFreeTrial && (user.campaignsCount || 0) >= 5;
+  const planDays = platformSettings?.planDurationDays || 30;
+  const isExpiringSoon =
+    isPaidActive &&
+    user.subscriptionStatus === 'active' &&
+    user.daysLeft > 0 &&
+    user.daysLeft <= 3;
   const runningOrScheduled = jobs.filter((j) => j.status === 'running' || j.status === 'scheduled');
   const totalSent = jobs.reduce((sum, j) => sum + j.sentCount, 0);
   const totalOpened = jobs.reduce((sum, j) => sum + j.openedCount, 0);
@@ -86,11 +92,23 @@ export const OverviewView: React.FC<OverviewViewProps> = ({ snapshot, lang, onNa
           </div>
         </div>
 
-        <div className="rounded-xl border border-slate-200 dark:border-white/[0.08] bg-white dark:bg-[#0d1119] p-4 sm:p-5">
+        <div
+          className={`rounded-xl border p-4 sm:p-5 ${
+            isExpiringSoon
+              ? 'border-amber-500/45 bg-amber-500/[0.06] dark:bg-amber-500/[0.08]'
+              : 'border-slate-200 dark:border-white/[0.08] bg-white dark:bg-[#0d1119]'
+          }`}
+        >
           <div className="text-[11px] sm:text-xs font-mono text-slate-500 dark:text-slate-400">
             {t(lang, 'daysLeft')}
           </div>
-          <div className="mt-1.5 sm:mt-2 text-2xl sm:text-3xl font-extrabold font-mono tabular-nums text-cyan-500 dark:text-cyan-400">
+          <div
+            className={`mt-1.5 sm:mt-2 text-2xl sm:text-3xl font-extrabold font-mono tabular-nums ${
+              isExpiringSoon
+                ? 'text-amber-500 dark:text-amber-400'
+                : 'text-cyan-500 dark:text-cyan-400'
+            }`}
+          >
             {user.daysLeft}
           </div>
         </div>
@@ -126,6 +144,29 @@ export const OverviewView: React.FC<OverviewViewProps> = ({ snapshot, lang, onNa
           )}
         </button>
       </div>
+
+      {isExpiringSoon && (
+        <div className="rounded-xl border border-amber-500/40 bg-amber-500/10 p-4 sm:p-5 flex flex-col sm:flex-row sm:items-center justify-between gap-3.5">
+          <div className="flex items-start sm:items-center gap-3">
+            <Clock className="w-5 h-5 text-amber-500 shrink-0 mt-0.5 sm:mt-0" />
+            <div>
+              <div className="text-xs sm:text-sm font-bold text-amber-800 dark:text-amber-200">
+                3-Day Top-Up Notice — {user.daysLeft} Day{user.daysLeft === 1 ? '' : 's'} Remaining
+              </div>
+              <div className="text-[11px] sm:text-xs font-mono text-amber-700/90 dark:text-amber-300/90 mt-0.5">
+                Your {planDays}-day subscription expires on {formatDayMonthYear(user.expiresAt)}. Top up now to add +{planDays} days with zero downtime.
+              </div>
+            </div>
+          </div>
+          <button
+            type="button"
+            onClick={() => onNavigate('subscription')}
+            className="w-full sm:w-auto min-h-[40px] px-4 py-2 rounded-lg bg-amber-500 text-slate-950 text-xs font-mono font-bold hover:opacity-95 whitespace-nowrap inline-flex items-center justify-center cursor-pointer"
+          >
+            Top Up +{planDays} Days →
+          </button>
+        </div>
+      )}
 
       {/* Ready to Send Banner */}
       <div className="rounded-xl border border-cyan-500/25 bg-cyan-500/[0.05] dark:bg-[#0b131e] p-4 sm:p-6 flex flex-col md:flex-row md:items-center justify-between gap-4">
@@ -214,7 +255,7 @@ export const OverviewView: React.FC<OverviewViewProps> = ({ snapshot, lang, onNa
               <dt className="text-slate-500 dark:text-slate-400 shrink-0">Plan</dt>
               <dd className="text-slate-900 dark:text-white font-semibold text-right">
                 {isPaidActive
-                  ? `Monthly — $${platformSettings?.monthlyPriceUsd || 20} USDT`
+                  ? `${planDays} Days — $${platformSettings?.monthlyPriceUsd || 20} USDT`
                   : 'Free Trial'}
               </dd>
             </div>

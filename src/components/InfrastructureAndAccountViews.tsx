@@ -1,4 +1,4 @@
-import React, { useRef, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import {
   AlertCircle,
   CheckCircle2,
@@ -857,11 +857,36 @@ export const AccountAndSubscriptionView: React.FC<AccountAndSubscriptionProps> =
     ((user.subscriptionStatus === 'pending' && (!user.expiresAt || user.daysLeft > 0)) ||
       (user.subscriptionStatus === 'active' && user.daysLeft > 0));
   const isTrialLimitReached = isFreeTrial && (user.campaignsCount || 0) >= 5;
+  const isExpiringSoon =
+    isPaidActive &&
+    user.subscriptionStatus === 'active' &&
+    user.daysLeft > 0 &&
+    user.daysLeft <= 3;
 
   const [copiedWallet, setCopiedWallet] = useState(false);
   const [txHash, setTxHash] = useState('');
   const [verifying, setVerifying] = useState(false);
   const [verifyFeedback, setVerifyFeedback] = useState<{ ok: boolean; msg: string } | null>(null);
+  const [nowTickMs, setNowTickMs] = useState(() => Date.now());
+
+  useEffect(() => {
+    if (!user.subscriptionEndsAt) return;
+    const timer = window.setInterval(() => {
+      setNowTickMs(Date.now());
+    }, 1000);
+    return () => window.clearInterval(timer);
+  }, [user.subscriptionEndsAt]);
+
+  const liveCountdownLabel = (() => {
+    if (!user.subscriptionEndsAt || user.subscriptionEndsAt <= nowTickMs) return null;
+    const totalSeconds = Math.max(0, Math.floor((user.subscriptionEndsAt - nowTickMs) / 1000));
+    const d = Math.floor(totalSeconds / 86400);
+    const h = Math.floor((totalSeconds % 86400) / 3600);
+    const m = Math.floor((totalSeconds % 3600) / 60);
+    const s = totalSeconds % 60;
+    const pad = (n: number) => String(n).padStart(2, '0');
+    return `${d}d ${pad(h)}h ${pad(m)}m ${pad(s)}s`;
+  })();
 
   const handleVerifyPayment = async () => {
     setVerifying(true);
@@ -893,55 +918,76 @@ export const AccountAndSubscriptionView: React.FC<AccountAndSubscriptionProps> =
   };
 
   if (mode === 'subscription') {
-    const statusTitle = isPaidActive
-      ? 'Paid & Active Plan'
-      : isTrialLimitReached
-        ? 'Payment Required to Continue Sending'
-        : isFreeTrial
-          ? 'Free Trial'
-          : user.subscriptionStatus === 'suspended'
-            ? 'Account Suspended — Payment Required'
-            : 'Subscription Expired — Renewal Required';
+    const statusTitle = isExpiringSoon
+      ? `Top-Up Notice — ${user.daysLeft} Day${user.daysLeft === 1 ? '' : 's'} Left`
+      : isPaidActive
+        ? `Paid & Active (${durationDays}-Day Plan)`
+        : isTrialLimitReached
+          ? 'Payment Required to Continue Sending'
+          : isFreeTrial
+            ? 'Free Trial'
+            : user.subscriptionStatus === 'suspended'
+              ? 'Account Suspended — Payment Required'
+              : 'Subscription Expired — Renewal Required';
 
     return (
       <div className="w-full max-w-4xl mx-auto space-y-5 sm:space-y-6">
         <div
           className={`rounded-xl border px-4 sm:px-6 py-3.5 sm:py-4 flex flex-col sm:flex-row sm:items-center justify-between gap-2.5 sm:gap-4 ${
-            isPaidActive
-              ? 'border-cyan-500/25 bg-cyan-500/[0.05]'
-              : isFreeTrial
-                ? 'border-amber-500/35 bg-amber-500/10'
-                : 'border-rose-500/35 bg-rose-500/10'
+            isExpiringSoon
+              ? 'border-amber-500/40 bg-amber-500/10'
+              : isPaidActive
+                ? 'border-cyan-500/25 bg-cyan-500/[0.05]'
+                : isFreeTrial
+                  ? 'border-amber-500/35 bg-amber-500/10'
+                  : 'border-rose-500/35 bg-rose-500/10'
           }`}
         >
           <div>
             <div
               className={`text-xs font-mono font-semibold ${
-                isPaidActive
-                  ? 'text-cyan-600 dark:text-cyan-400'
-                  : isFreeTrial
-                    ? 'text-amber-600 dark:text-amber-400'
-                    : 'text-rose-600 dark:text-rose-400'
+                isExpiringSoon
+                  ? 'text-amber-600 dark:text-amber-400'
+                  : isPaidActive
+                    ? 'text-cyan-600 dark:text-cyan-400'
+                    : isFreeTrial
+                      ? 'text-amber-600 dark:text-amber-400'
+                      : 'text-rose-600 dark:text-rose-400'
               }`}
             >
               {statusTitle}
             </div>
             <div className="text-xs font-mono tabular-nums text-slate-600 dark:text-slate-400 mt-0.5">
               {isPaidActive
-                ? `Expires: ${user.expiresAt ? formatDayMonthYear(user.expiresAt) : 'Active'} (${user.daysLeft} days left) · Email sending unlocked`
+                ? `Expires: ${user.expiresAt ? formatDayMonthYear(user.expiresAt) : 'Active'} (${user.daysLeft} day${user.daysLeft === 1 ? '' : 's'} left${liveCountdownLabel ? ` · ${liveCountdownLabel}` : ''}) · ${isExpiringSoon ? `Top up below to add +${durationDays} days` : 'Email sending unlocked'}`
                 : isTrialLimitReached
-                  ? 'Complete payment below to activate your monthly plan and continue sending emails'
+                  ? `Complete payment below to activate your ${durationDays}-day plan and continue sending emails`
                   : isFreeTrial
-                    ? 'Upgrade below anytime for 30 days of full Paid & Active access'
+                    ? `Upgrade below anytime for ${durationDays} days of full Paid & Active access`
                     : user.expiresAt
-                      ? `Expired on ${formatDayMonthYear(user.expiresAt)} — Complete payment below to reactivate your account`
-                      : 'Complete payment below to activate your account immediately'}
+                      ? `Expired on ${formatDayMonthYear(user.expiresAt)} — Complete payment below to reactivate for ${durationDays} days`
+                      : `Complete payment below to activate your ${durationDays}-day plan immediately`}
             </div>
           </div>
           {isPaidActive ? (
-            <span className="text-xs font-mono text-emerald-600 dark:text-emerald-400 inline-flex items-center gap-1 shrink-0 self-start sm:self-auto">
-              <CheckCircle2 className="w-4 h-4" />
-              <span>Paid &amp; Active</span>
+            <span
+              className={`text-xs font-mono inline-flex items-center gap-1 shrink-0 self-start sm:self-auto ${
+                isExpiringSoon
+                  ? 'text-amber-600 dark:text-amber-400 font-bold'
+                  : 'text-emerald-600 dark:text-emerald-400'
+              }`}
+            >
+              {isExpiringSoon ? (
+                <>
+                  <AlertCircle className="w-4 h-4" />
+                  <span>Top Up Soon</span>
+                </>
+              ) : (
+                <>
+                  <CheckCircle2 className="w-4 h-4" />
+                  <span>Paid &amp; Active</span>
+                </>
+              )}
             </span>
           ) : (
             <span

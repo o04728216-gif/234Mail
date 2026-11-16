@@ -325,6 +325,119 @@ export function syncUserActiveRevenue(
   }
 }
 
+export const SUBSCRIPTION_DAY_MS = 24 * 60 * 60 * 1000;
+
+export function parseExpirationDateToMs(expiresAt?: string): number | null {
+  if (!expiresAt || typeof expiresAt !== 'string') return null;
+  const trimmed = expiresAt.trim();
+  const ymd = /^(\d{4})-(\d{2})-(\d{2})$/.exec(trimmed);
+  if (ymd) {
+    return Date.UTC(Number(ymd[1]), Number(ymd[2]) - 1, Number(ymd[3]), 0, 0, 0, 0);
+  }
+  const parsed = Date.parse(trimmed);
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
+export function applySubscriptionDays(
+  u: {
+    subscriptionEndsAt?: number;
+    expiresAt: string;
+    daysLeft: number;
+  },
+  days: number,
+  nowMs: number = Date.now()
+): void {
+  const cleanDays = Math.max(0, Math.round(days));
+  if (cleanDays <= 0) {
+    u.daysLeft = 0;
+    u.subscriptionEndsAt = undefined;
+    return;
+  }
+  const endMs = nowMs + cleanDays * SUBSCRIPTION_DAY_MS;
+  u.subscriptionEndsAt = endMs;
+  u.daysLeft = cleanDays;
+  u.expiresAt = new Date(endMs).toISOString().slice(0, 10);
+}
+
+export function syncUserSubscriptionCountdown(
+  u: {
+    role?: UserRole;
+    subscriptionStatus: SubscriptionStatus;
+    subscriptionEndsAt?: number;
+    expiresAt: string;
+    daysLeft: number;
+  },
+  nowMs: number = Date.now()
+): boolean {
+  const prevDays = u.daysLeft;
+  const prevStatus = u.subscriptionStatus;
+  const prevEndsAt = u.subscriptionEndsAt;
+  const prevExpiresAt = u.expiresAt;
+
+  if (u.subscriptionStatus === 'suspended' || u.subscriptionStatus === 'expired') {
+    u.daysLeft = 0;
+    u.subscriptionEndsAt = undefined;
+    return (
+      u.daysLeft !== prevDays ||
+      u.subscriptionStatus !== prevStatus ||
+      u.subscriptionEndsAt !== prevEndsAt
+    );
+  }
+
+  // Quiet 5-campaign Free Trial accounts have status 'pending' with no calendar timer
+  if (
+    u.subscriptionStatus === 'pending' &&
+    !u.subscriptionEndsAt &&
+    !u.expiresAt &&
+    (u.daysLeft || 0) <= 0
+  ) {
+    u.daysLeft = 0;
+    return u.daysLeft !== prevDays;
+  }
+
+  let endMs: number | null =
+    typeof u.subscriptionEndsAt === 'number' &&
+    Number.isFinite(u.subscriptionEndsAt) &&
+    u.subscriptionEndsAt > 0
+      ? u.subscriptionEndsAt
+      : parseExpirationDateToMs(u.expiresAt);
+
+  if (endMs === null && u.daysLeft > 0) {
+    endMs = nowMs + u.daysLeft * SUBSCRIPTION_DAY_MS;
+  }
+
+  if (endMs === null) {
+    u.daysLeft = 0;
+    if (u.subscriptionStatus === 'active' && u.role !== 'admin') {
+      u.subscriptionStatus = 'expired';
+    }
+    return u.daysLeft !== prevDays || u.subscriptionStatus !== prevStatus;
+  }
+
+  u.subscriptionEndsAt = endMs;
+  if (!u.expiresAt) {
+    u.expiresAt = new Date(endMs).toISOString().slice(0, 10);
+  }
+
+  const remainingMs = endMs - nowMs;
+  if (remainingMs <= 0) {
+    u.daysLeft = 0;
+    u.subscriptionEndsAt = undefined;
+    if (u.subscriptionStatus === 'active' && u.role !== 'admin') {
+      u.subscriptionStatus = 'expired';
+    }
+  } else {
+    u.daysLeft = Math.max(1, Math.ceil(remainingMs / SUBSCRIPTION_DAY_MS));
+  }
+
+  return (
+    u.daysLeft !== prevDays ||
+    u.subscriptionStatus !== prevStatus ||
+    u.subscriptionEndsAt !== prevEndsAt ||
+    u.expiresAt !== prevExpiresAt
+  );
+}
+
 function buildSeedUsers(): StoredUser[] {
   const mkUser = (params: {
     id: string;
@@ -961,10 +1074,12 @@ function migrateLoadedState(parsed: Partial<PersistentState>): PersistentState {
     }
   }
 
+  const nowBootMs = Date.now();
   for (const u of users) {
     if ((!parsed.schemaVersion || parsed.schemaVersion < 7) && u.planName?.includes('$50')) {
       u.planName = `Monthly — $${platformSettings.monthlyPriceUsd} USDT`;
     }
+    syncUserSubscriptionCountdown(u, nowBootMs);
     syncUserActiveRevenue(u, platformSettings);
   }
 
@@ -1312,7 +1427,29 @@ class DataStore {
     return this.state.userWorkspaces[uid];
   }
 
+  public refreshUserSubscription(u: StoredUser, nowMs: number = Date.now()): boolean {
+    const changed = syncUserSubscriptionCountdown(u, nowMs);
+    if (changed) {
+      this.scheduleSave();
+    }
+    return changed;
+  }
+
+  public refreshAllSubscriptions(nowMs: number = Date.now()): StoredUser[] {
+    const updatedUsers: StoredUser[] = [];
+    for (const u of this.state.users) {
+      if (syncUserSubscriptionCountdown(u, nowMs)) {
+        updatedUsers.push(u);
+      }
+    }
+    if (updatedUsers.length > 0) {
+      this.scheduleSave();
+    }
+    return updatedUsers;
+  }
+
   public sanitizeUser(u: StoredUser): UserProfile {
+    this.refreshUserSubscription(u);
     const { passwordHash: _ph, salt: _s, ...profile } = u;
     return profile;
   }
@@ -1326,7 +1463,8 @@ class DataStore {
     overrideDays?: number
   ): StoredUser {
     const salt = crypto.randomBytes(16).toString('hex');
-    const nowStr = new Date().toISOString().slice(0, 16).replace('T', ' ');
+    const nowMs = Date.now();
+    const nowStr = new Date(nowMs).toISOString().slice(0, 16).replace('T', ' ');
     const ps = this.state.platformSettings;
     const planDays = Math.max(1, ps.planDurationDays || 30);
 
@@ -1343,10 +1481,10 @@ class DataStore {
           : 0;
 
     let expiresAt = '';
+    let subscriptionEndsAt: number | undefined;
     if (daysLeft > 0) {
-      const exp = new Date();
-      exp.setDate(exp.getDate() + daysLeft);
-      expiresAt = exp.toISOString().slice(0, 10);
+      subscriptionEndsAt = nowMs + daysLeft * SUBSCRIPTION_DAY_MS;
+      expiresAt = new Date(subscriptionEndsAt).toISOString().slice(0, 10);
     }
 
     const userNumber = this.state.nextUserNumber || this.state.users.length + 1;
@@ -1367,6 +1505,7 @@ class DataStore {
         : 'Free Trial',
       subscriptionStatus: status,
       expiresAt,
+      subscriptionEndsAt,
       daysLeft,
       joinedAt: nowStr.slice(0, 10),
       lastLoginAt: nowStr,

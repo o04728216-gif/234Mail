@@ -24,10 +24,10 @@ export default defineConfig(() => {
         ],
         manifest: {
           id: '/',
-          name: '234Mail — High-Deliverability Email & Queue Engine',
+          name: '234Mail',
           short_name: '234Mail',
           description:
-            'High-deliverability email service provider with real SMTP integration, stepped hourly queue jobs, high-speed dispatch, and live open tracking.',
+            '234Mail bulk email sender with multi-SMTP auto-failover, live inbox, and open tracking.',
           theme_color: '#07090e',
           background_color: '#07090e',
           display: 'standalone',

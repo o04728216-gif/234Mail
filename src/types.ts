@@ -34,6 +34,7 @@ export interface UserProfile {
   planName: string;
   subscriptionStatus: SubscriptionStatus;
   expiresAt: string;
+  subscriptionEndsAt?: number;
   daysLeft: number;
   joinedAt: string;
   lastLoginAt: string;

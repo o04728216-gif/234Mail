@@ -87,6 +87,7 @@ function getUserThemeStorageKey(userId: string): string {
 }
 
 const FREE_TRIAL_CAMPAIGN_LIMIT = 5;
+const TOP_UP_NOTICE_DAYS = 3;
 
 function userIsPaidAndActive(user: UserProfile): boolean {
   return (
@@ -148,7 +149,12 @@ export default function App() {
     return () => window.removeEventListener('popstate', onPopState);
   }, []);
 
+  useEffect(() => {
+    document.title = '234Mail';
+  }, [routePath]);
+
   const isAdminRoute = checkIsAdminPath(routePath);
+  const [dismissedTopUpKey, setDismissedTopUpKey] = useState<string | null>(null);
 
   const [theme, setTheme] = useState<ThemeId>(() => {
     const savedTheme = localStorage.getItem(STORAGE_THEME_KEY);
@@ -644,6 +650,13 @@ export default function App() {
   const isPaidAndActive = userIsPaidAndActive(snapshot.user);
   const needsPaymentToSend = userNeedsPaymentToSend(snapshot.user);
   const canAccessWorkspace = userCanAccessWorkspace(snapshot.user);
+  const planDaysCount = snapshot.platformSettings?.planDurationDays || 30;
+  const isLowDaysNotice =
+    isPaidAndActive &&
+    snapshot.user.subscriptionStatus === 'active' &&
+    snapshot.user.daysLeft > 0 &&
+    snapshot.user.daysLeft <= TOP_UP_NOTICE_DAYS;
+  const currentTopUpKey = `${snapshot.user.id}_${snapshot.user.daysLeft}`;
 
   const renderImpersonationBanner = () =>
     adminReturnToken ? (
@@ -904,6 +917,38 @@ export default function App() {
     <div className="h-[100dvh] overflow-hidden flex flex-col bg-slate-50 text-slate-900 dark:bg-[#07090e] dark:text-slate-100 transition-colors">
       {renderImpersonationBanner()}
 
+      {isLowDaysNotice && activeTab !== 'subscription' && dismissedTopUpKey !== currentTopUpKey && (
+        <div className="shrink-0 px-3.5 sm:px-6 py-2 bg-amber-500/15 border-b border-amber-500/35 flex flex-wrap items-center justify-between gap-2 text-xs font-mono text-amber-800 dark:text-amber-200 z-30">
+          <div className="flex items-center gap-2 min-w-0">
+            <Clock className="w-3.5 h-3.5 text-amber-500 shrink-0" />
+            <span className="leading-snug">
+              <strong>Top-Up Notice:</strong> Only{' '}
+              <strong className="tabular-nums">
+                {snapshot.user.daysLeft} day{snapshot.user.daysLeft === 1 ? '' : 's'}
+              </strong>{' '}
+              left on your {planDaysCount}-day subscription. Top up now to avoid any sending interruption.
+            </span>
+          </div>
+          <div className="flex items-center gap-1.5 shrink-0 ml-auto">
+            <button
+              type="button"
+              onClick={() => selectTab('subscription')}
+              className="min-h-[30px] px-3 py-1 rounded-lg bg-amber-500 text-slate-950 font-bold whitespace-nowrap hover:opacity-95 transition-opacity cursor-pointer"
+            >
+              Top Up (+{planDaysCount}d)
+            </button>
+            <button
+              type="button"
+              aria-label="Dismiss top-up notice"
+              onClick={() => setDismissedTopUpKey(currentTopUpKey)}
+              className="p-1 rounded-md text-amber-700 dark:text-amber-300 hover:bg-amber-500/20 cursor-pointer"
+            >
+              <X className="w-3.5 h-3.5" />
+            </button>
+          </div>
+        </div>
+      )}
+
       {/* Clean Top Bar (Compact 48px-56px height on mobile, >=44px touch hitboxes) */}
       <header className="h-13 sm:h-14 shrink-0 px-3 sm:px-4 lg:px-6 border-b border-slate-200 dark:border-white/[0.07] bg-white dark:bg-[#090c13] flex items-center justify-between gap-2.5 sm:gap-4 z-30">
         <div className="flex items-center gap-2 sm:gap-3 min-w-0">
@@ -932,9 +977,17 @@ export default function App() {
             <button
               type="button"
               onClick={() => selectTab('subscription')}
-              className="hidden sm:inline-flex items-center gap-1 px-2.5 py-1 min-h-[34px] rounded-lg border border-emerald-500/30 bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 tabular-nums cursor-pointer"
+              className={
+                isLowDaysNotice
+                  ? 'inline-flex items-center gap-1 px-2.5 py-1 min-h-[34px] rounded-lg border border-amber-500/45 bg-amber-500/15 text-amber-700 dark:text-amber-300 font-semibold tabular-nums whitespace-nowrap hover:bg-amber-500/25 transition-colors cursor-pointer'
+                  : 'hidden sm:inline-flex items-center gap-1 px-2.5 py-1 min-h-[34px] rounded-lg border border-emerald-500/30 bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 tabular-nums whitespace-nowrap cursor-pointer'
+              }
             >
-              <span>✓ Paid · {snapshot.user.daysLeft}d</span>
+              <span>
+                {isLowDaysNotice
+                  ? `⚠ ${snapshot.user.daysLeft}d left · Top Up`
+                  : `✓ Paid · ${snapshot.user.daysLeft}d`}
+              </span>
             </button>
           ) : (
             <button
