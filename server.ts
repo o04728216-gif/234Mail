@@ -266,6 +266,121 @@ async function bootstrap() {
   }, 30_000);
 
   // ============================================================================
+  // LOGIN RATE LIMITER (10 tries -> 10-minute lockout for both User & Admin)
+  // & FIRST-TIME VPS ADMIN SETUP
+  // ============================================================================
+  const MAX_LOGIN_ATTEMPTS = 10;
+  const LOGIN_LOCKOUT_MS = 10 * 60 * 1000; // 10 minutes
+  const LOGIN_ATTEMPT_WINDOW_MS = 15 * 60 * 1000;
+
+  interface LoginRateBucket {
+    attempts: number;
+    lastAttemptAt: number;
+    lockedUntil: number | null;
+  }
+
+  const loginRateBuckets = new Map<string, LoginRateBucket>();
+
+  const getClientIp = (req: Request): string => {
+    const xff = req.headers['x-forwarded-for'];
+    if (typeof xff === 'string' && xff.trim()) {
+      return xff.split(',')[0].trim();
+    }
+    if (Array.isArray(xff) && xff.length > 0 && xff[0]) {
+      return xff[0].split(',')[0].trim();
+    }
+    const realIp = req.headers['x-real-ip'];
+    if (typeof realIp === 'string' && realIp.trim()) {
+      return realIp.trim();
+    }
+    return req.ip || req.socket.remoteAddress || 'local';
+  };
+
+  const getRateBucket = (req: Request, portal: 'admin' | 'user', nowMs: number): LoginRateBucket => {
+    const key = `${getClientIp(req)}::${portal}`;
+    let bucket = loginRateBuckets.get(key);
+    if (!bucket) {
+      bucket = { attempts: 0, lastAttemptAt: nowMs, lockedUntil: null };
+      loginRateBuckets.set(key, bucket);
+      return bucket;
+    }
+    if (bucket.lockedUntil && bucket.lockedUntil <= nowMs) {
+      bucket.lockedUntil = null;
+      bucket.attempts = 0;
+    } else if (!bucket.lockedUntil && nowMs - bucket.lastAttemptAt > LOGIN_ATTEMPT_WINDOW_MS) {
+      bucket.attempts = 0;
+    }
+    return bucket;
+  };
+
+  const clearRateBucket = (req: Request, portal: 'admin' | 'user'): void => {
+    loginRateBuckets.delete(`${getClientIp(req)}::${portal}`);
+  };
+
+  app.get('/api/auth/login-status', (req: Request, res: Response) => {
+    const nowMs = Date.now();
+    const portal = req.query.portal === 'admin' ? 'admin' : 'user';
+    const bucket = getRateBucket(req, portal, nowMs);
+    const rateLimited = Boolean(bucket.lockedUntil && bucket.lockedUntil > nowMs);
+    const retryAfterSeconds =
+      rateLimited && bucket.lockedUntil ? Math.max(1, Math.ceil((bucket.lockedUntil - nowMs) / 1000)) : 0;
+    const hasAnyAdmin = store.state.users.some((u) => u.role === 'admin');
+
+    res.json({
+      rateLimited,
+      lockedUntil: rateLimited ? bucket.lockedUntil : null,
+      retryAfterSeconds,
+      remainingAttempts: rateLimited ? 0 : Math.max(0, MAX_LOGIN_ATTEMPTS - bucket.attempts),
+      needsInitialAdminSetup: !hasAnyAdmin,
+    });
+  });
+
+  app.post('/api/auth/setup-first-admin', (req: Request, res: Response) => {
+    const hasAnyAdmin = store.state.users.some((u) => u.role === 'admin');
+    if (hasAnyAdmin) {
+      res.status(403).json({
+        error: 'An administrator account already exists on this server. Please sign in normally.',
+      });
+      return;
+    }
+
+    const { username, email, password } = req.body as {
+      username?: string;
+      email?: string;
+      password?: string;
+    };
+
+    const cleanUser = username?.trim() || '';
+    const cleanEmail = email?.trim() || '';
+    if (cleanUser.length < 2 || !cleanEmail.includes('@') || !password || password.length < 4) {
+      res.status(400).json({
+        error: 'Valid admin username, email address, and password (min 4 characters) are required.',
+      });
+      return;
+    }
+
+    const taken = store.state.users.some(
+      (u) =>
+        u.username.toLowerCase() === cleanUser.toLowerCase() ||
+        u.email.toLowerCase() === cleanEmail.toLowerCase()
+    );
+    if (taken) {
+      res.status(409).json({ error: 'That username or email already exists.' });
+      return;
+    }
+
+    const createdAdmin = store.createUser(cleanUser, cleanEmail, password, 'admin', 'active', 30);
+    const token = `sess_${crypto.randomBytes(24).toString('hex')}`;
+    store.state.sessions[token] = createdAdmin.id;
+    store.persistSync();
+
+    res.status(201).json({
+      token,
+      snapshot: buildSnapshot(createdAdmin),
+    });
+  });
+
+  // ============================================================================
   // AUTHENTICATION ROUTES
   // ============================================================================
   app.post('/api/auth/login', (req: Request, res: Response) => {
@@ -274,6 +389,22 @@ async function bootstrap() {
       password?: string;
       adminPortal?: boolean;
     };
+
+    const portal: 'admin' | 'user' = adminPortal ? 'admin' : 'user';
+    const nowMs = Date.now();
+    const bucket = getRateBucket(req, portal, nowMs);
+
+    if (bucket.lockedUntil && bucket.lockedUntil > nowMs) {
+      const retryAfterSeconds = Math.max(1, Math.ceil((bucket.lockedUntil - nowMs) / 1000));
+      res.status(429).json({
+        error: 'Too many tries, retry after 10 minutes.',
+        rateLimited: true,
+        retryAfterSeconds,
+        lockedUntil: bucket.lockedUntil,
+      });
+      return;
+    }
+
     if (!identifier || !password) {
       res.status(400).json({ error: 'Username/email and password are required.' });
       return;
@@ -284,11 +415,6 @@ async function bootstrap() {
       (u) => u.username.toLowerCase() === normalized || u.email.toLowerCase() === normalized
     );
 
-    if (!user || hashPassword(password, user.salt) !== user.passwordHash) {
-      res.status(401).json({ error: 'Invalid username/email or password.' });
-      return;
-    }
-
     const envAdminIdentifier = (
       process.env.ADMIN_USERNAME ||
       process.env.ADMIN_EMAIL ||
@@ -297,13 +423,46 @@ async function bootstrap() {
       .trim()
       .toLowerCase();
     const matchesEnvAdmin =
-      Boolean(envAdminIdentifier) &&
-      (user.username.toLowerCase() === envAdminIdentifier ||
-        user.email.toLowerCase() === envAdminIdentifier);
+      Boolean(user && envAdminIdentifier) &&
+      (user!.username.toLowerCase() === envAdminIdentifier ||
+        user!.email.toLowerCase() === envAdminIdentifier);
 
-    // Zero-admin anti-lockout recovery when signing in at /admin (or matching ADMIN_USERNAME/ADMIN_EMAIL)
-    const hasAnyAdmin = store.state.users.some((u) => u.role === 'admin');
-    if (matchesEnvAdmin || (adminPortal && !hasAnyAdmin)) {
+    const passwordMatches = Boolean(user && hashPassword(password, user.salt) === user.passwordHash);
+    const isUnauthorizedAdminAttempt =
+      Boolean(adminPortal) && Boolean(user) && user!.role !== 'admin' && !matchesEnvAdmin;
+
+    if (!user || !passwordMatches || isUnauthorizedAdminAttempt) {
+      bucket.attempts += 1;
+      bucket.lastAttemptAt = nowMs;
+
+      if (bucket.attempts >= MAX_LOGIN_ATTEMPTS) {
+        bucket.lockedUntil = nowMs + LOGIN_LOCKOUT_MS;
+        bucket.attempts = 0;
+        const retryAfterSeconds = Math.ceil(LOGIN_LOCKOUT_MS / 1000);
+        res.status(429).json({
+          error: 'Too many tries, retry after 10 minutes.',
+          rateLimited: true,
+          retryAfterSeconds,
+          lockedUntil: bucket.lockedUntil,
+        });
+        return;
+      }
+
+      res.status(isUnauthorizedAdminAttempt ? 403 : 401).json({
+        error: isUnauthorizedAdminAttempt
+          ? 'Access denied: that account does not have Admin permissions.'
+          : adminPortal
+            ? 'Invalid admin credentials.'
+            : 'Invalid username/email or password.',
+        remainingAttempts: MAX_LOGIN_ATTEMPTS - bucket.attempts,
+      });
+      return;
+    }
+
+    // Successful login — clear rate-limit attempts for this IP + portal
+    clearRateBucket(req, portal);
+
+    if (matchesEnvAdmin && user.role !== 'admin') {
       user.role = 'admin';
       store.persistSync();
     }

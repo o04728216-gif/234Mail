@@ -476,186 +476,40 @@ function buildSeedUsers(): StoredUser[] {
     };
   };
 
-  const seedAdminUsername = process.env.ADMIN_USERNAME?.trim() || 'Geekytycoon';
-  const seedAdminEmail = process.env.ADMIN_EMAIL?.trim() || 'laytua@duck.com';
-  const seedAdminPassword =
+  const envAdminUsername = process.env.ADMIN_USERNAME?.trim() || '';
+  const envAdminEmail = process.env.ADMIN_EMAIL?.trim() || '';
+  const envAdminPassword =
     process.env.ADMIN_PASSWORD && process.env.ADMIN_PASSWORD.trim().length >= 4
       ? process.env.ADMIN_PASSWORD.trim()
-      : 'demo1234';
+      : '';
 
-  return [
-    mkUser({
-      id: 'usr_geekytycoon',
-      userNumber: 18,
-      username: seedAdminUsername,
-      email: seedAdminEmail,
-      password: seedAdminPassword,
+  // On a brand-new VPS with no esp-store.json yet:
+  // - If ADMIN_USERNAME + ADMIN_PASSWORD are provided in .env, create that Admin immediately.
+  // - Otherwise start with 0 users so visiting /admin opens First-Time Admin Account Setup!
+  if (envAdminUsername && envAdminPassword) {
+    const nowMs = Date.now();
+    const endMs = nowMs + 30 * SUBSCRIPTION_DAY_MS;
+    const nowDate = new Date(nowMs).toISOString().slice(0, 10);
+    const adminUser = mkUser({
+      id: SEED_OWNER_ID,
+      userNumber: 1,
+      username: envAdminUsername,
+      email: envAdminEmail || `${envAdminUsername.toLowerCase()}@localhost`,
+      password: envAdminPassword,
       role: 'admin',
       status: 'active',
-      expiresAt: '2026-12-08',
-      daysLeft: 26,
-      joinedAt: '2026-03-17',
+      expiresAt: new Date(endMs).toISOString().slice(0, 10),
+      daysLeft: 30,
+      joinedAt: nowDate,
       paymentsCount: 1,
       totalPaidUsd: 20,
       campaignsCount: 0,
-    }),
-    mkUser({
-      id: 'usr_17_ayomide',
-      userNumber: 17,
-      username: 'AYOMIDE23',
-      email: 'paulwilliam7476@gmail.com',
-      status: 'expired',
-      expiresAt: '2026-11-12',
-      daysLeft: 0,
-      joinedAt: '2026-10-13',
-      paymentsCount: 0,
-      totalPaidUsd: 0,
-      campaignsCount: 5,
-    }),
-    mkUser({
-      id: 'usr_16_santawilly',
-      userNumber: 16,
-      username: 'Santawilly',
-      email: 'lovelysoul315@gmail.com',
-      status: 'active',
-      expiresAt: '2026-12-08',
-      daysLeft: 26,
-      joinedAt: '2026-10-08',
-      paymentsCount: 1,
-      totalPaidUsd: 20,
-      campaignsCount: 6,
-    }),
-    mkUser({
-      id: 'usr_15_joseph62',
-      userNumber: 15,
-      username: 'Joseph62',
-      email: 'josephnwachukwu679@gmail.com',
-      status: 'active',
-      expiresAt: '2026-12-08',
-      daysLeft: 26,
-      joinedAt: '2026-10-08',
-      paymentsCount: 1,
-      totalPaidUsd: 20,
-      campaignsCount: 11,
-    }),
-    mkUser({
-      id: 'usr_10_richard',
-      userNumber: 10,
-      username: 'RichardRex0147',
-      email: 'rexrichard291@gmail.com',
-      status: 'expired',
-      expiresAt: '2026-10-14',
-      daysLeft: 0,
-      joinedAt: '2026-09-14',
-      paymentsCount: 0,
-      totalPaidUsd: 0,
-      campaignsCount: 85,
-    }),
-    mkUser({
-      id: 'usr_9_behej',
-      userNumber: 9,
-      username: 'Behej',
-      email: 'felixadams5050@gmail.com',
-      status: 'expired',
-      expiresAt: '2026-10-21',
-      daysLeft: 0,
-      joinedAt: '2026-08-19',
-      paymentsCount: 0,
-      totalPaidUsd: 0,
-      campaignsCount: 102,
-    }),
-    mkUser({
-      id: 'usr_8_hakeem',
-      userNumber: 8,
-      username: 'Hakeem',
-      email: 'alimihakeem53@gmail.com',
-      status: 'pending',
-      expiresAt: '',
-      daysLeft: 0,
-      joinedAt: '2026-08-19',
-      paymentsCount: 0,
-      totalPaidUsd: 0,
-      campaignsCount: 0,
-    }),
-    mkUser({
-      id: 'usr_7_moshow',
-      userNumber: 7,
-      username: 'moshow',
-      email: 'ihggghuy@gmail.com',
-      status: 'expired',
-      expiresAt: '2026-09-18',
-      daysLeft: 0,
-      joinedAt: '2026-08-19',
-      paymentsCount: 0,
-      totalPaidUsd: 0,
-      campaignsCount: 0,
-    }),
-    mkUser({
-      id: 'usr_6_vivit',
-      userNumber: 6,
-      username: 'Vivitcm002',
-      email: 'apexcalibrationllc@gmail.com',
-      status: 'expired',
-      expiresAt: '2026-09-06',
-      daysLeft: 0,
-      joinedAt: '2026-08-07',
-      paymentsCount: 0,
-      totalPaidUsd: 0,
-      campaignsCount: 35,
-    }),
-    mkUser({
-      id: 'usr_5_trimset',
-      userNumber: 5,
-      username: 'trimset',
-      email: 'suprisegift295@gmail.com',
-      status: 'expired',
-      expiresAt: '2026-06-19',
-      daysLeft: 0,
-      joinedAt: '2026-05-20',
-      paymentsCount: 0,
-      totalPaidUsd: 0,
-      campaignsCount: 149,
-    }),
-    mkUser({
-      id: 'usr_4_kingdavid',
-      userNumber: 4,
-      username: 'KingDavid',
-      email: 'davidk99@gmail.com',
-      status: 'expired',
-      expiresAt: '2026-06-02',
-      daysLeft: 0,
-      joinedAt: '2026-05-02',
-      paymentsCount: 0,
-      totalPaidUsd: 0,
-      campaignsCount: 18,
-    }),
-    mkUser({
-      id: 'usr_3_celestine',
-      userNumber: 3,
-      username: 'Celestine',
-      email: 'celestine.m@gmail.com',
-      status: 'expired',
-      expiresAt: '2026-05-14',
-      daysLeft: 0,
-      joinedAt: '2026-04-14',
-      paymentsCount: 0,
-      totalPaidUsd: 0,
-      campaignsCount: 42,
-    }),
-    mkUser({
-      id: 'usr_2_tunde',
-      userNumber: 2,
-      username: 'TundeB',
-      email: 'tundebusiness@gmail.com',
-      status: 'expired',
-      expiresAt: '2026-04-28',
-      daysLeft: 0,
-      joinedAt: '2026-03-29',
-      paymentsCount: 0,
-      totalPaidUsd: 0,
-      campaignsCount: 9,
-    }),
-  ];
+    });
+    adminUser.subscriptionEndsAt = endMs;
+    return [adminUser];
+  }
+
+  return [];
 }
 
 function createSeedState(): PersistentState {
@@ -798,7 +652,7 @@ function createSeedState(): PersistentState {
 
   return {
     schemaVersion: CURRENT_SCHEMA_VERSION,
-    nextUserNumber: 19,
+    nextUserNumber: users.length + 1,
     users,
     userWorkspaces,
     sessions: {},
@@ -998,7 +852,7 @@ function migrateLoadedState(parsed: Partial<PersistentState>): PersistentState {
   }
 
   let users: StoredUser[];
-  if (wasVeryOldSchema || !Array.isArray(parsed.users) || parsed.users.length === 0) {
+  if (wasVeryOldSchema || !Array.isArray(parsed.users)) {
     const seededUsers = buildSeedUsers();
     const extraCustomUsers = (parsed.users || [])
       .filter(
@@ -1010,7 +864,7 @@ function migrateLoadedState(parsed: Partial<PersistentState>): PersistentState {
       )
       .map((u, idx) => ({
         ...u,
-        userNumber: u.userNumber || 19 + idx,
+        userNumber: u.userNumber || seededUsers.length + 1 + idx,
         subscriptionStatus: (u.subscriptionStatus as SubscriptionStatus) || 'active',
         paymentsCount: typeof u.paymentsCount === 'number' ? u.paymentsCount : 0,
         totalPaidUsd: typeof u.totalPaidUsd === 'number' ? u.totalPaidUsd : 0,
@@ -1058,18 +912,13 @@ function migrateLoadedState(parsed: Partial<PersistentState>): PersistentState {
     }
   }
 
-  // Anti-lockout auto-recovery: if 0 admins remain (e.g. accidental self-demotion),
-  // automatically restore Admin role on the primary admin account without touching user data.
+  // Anti-lockout auto-recovery for known primary admin ID if accidentally demoted
   if (users.length > 0 && !users.some((u) => u.role === 'admin')) {
-    const recoveryTarget =
-      users.find((u) => u.id === SEED_OWNER_ID) ||
-      users
-        .slice()
-        .sort((a, b) => (a.userNumber || 999999) - (b.userNumber || 999999))[0];
+    const recoveryTarget = users.find((u) => u.id === SEED_OWNER_ID);
     if (recoveryTarget) {
       recoveryTarget.role = 'admin';
       console.log(
-        `[234Mail] Auto-recovered Admin role for "${recoveryTarget.username}" (${recoveryTarget.id}) because zero admin accounts existed.`
+        `[234Mail] Auto-recovered Admin role for "${recoveryTarget.username}" (${recoveryTarget.id}).`
       );
     }
   }

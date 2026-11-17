@@ -10,8 +10,18 @@ import {
   X,
 } from 'lucide-react';
 import type { DashboardSnapshot } from '../types';
-import { apiRequest } from '../utils/api';
+import { ApiError, apiRequest } from '../utils/api';
 import { PWAInstallButton } from './PWAInstallButton';
+
+const USER_LOCK_STORAGE_KEY = '234mail_login_lock_user';
+const RATE_LIMIT_MESSAGE = 'Too many tries, retry after 10 minutes.';
+
+function formatTinyCountdown(totalSeconds: number): string {
+  const safe = Math.max(0, Math.ceil(totalSeconds));
+  const mins = Math.floor(safe / 60);
+  const secs = safe % 60;
+  return `${String(mins).padStart(2, '0')}:${String(secs).padStart(2, '0')}`;
+}
 
 interface LandingAuthViewProps {
   loggedOutMessage: string | null;
@@ -52,13 +62,94 @@ export const LandingAuthView: React.FC<LandingAuthViewProps> = ({
     email: string;
   } | null>(null);
 
-  const [error, setError] = useState<string | null>(null);
+  const [lockUntilMs, setLockUntilMs] = useState<number | null>(() => {
+    try {
+      const saved = Number(localStorage.getItem(USER_LOCK_STORAGE_KEY) || '0');
+      return saved > Date.now() ? saved : null;
+    } catch {
+      return null;
+    }
+  });
+  const [nowTickMs, setNowTickMs] = useState<number>(() => Date.now());
+
+  const [error, setError] = useState<string | null>(() => {
+    if (resetToken) return null;
+    try {
+      const saved = Number(localStorage.getItem(USER_LOCK_STORAGE_KEY) || '0');
+      return saved > Date.now() ? RATE_LIMIT_MESSAGE : null;
+    } catch {
+      return null;
+    }
+  });
   const [resetSuccess, setResetSuccess] = useState<string | null>(null);
   const [magicLinkSentInfo, setMagicLinkSentInfo] = useState<{
     email: string;
     message: string;
     magicLink?: string;
   } | null>(null);
+
+  const remainingLockSeconds =
+    lockUntilMs && lockUntilMs > nowTickMs ? Math.ceil((lockUntilMs - nowTickMs) / 1000) : 0;
+  const isSignInLocked = remainingLockSeconds > 0;
+
+  // Sync login rate-limit status with server on load
+  useEffect(() => {
+    let cancelled = false;
+    apiRequest<{
+      rateLimited: boolean;
+      lockedUntil: number | null;
+      retryAfterSeconds: number;
+    }>('/api/auth/login-status?portal=user')
+      .then((status) => {
+        if (cancelled) return;
+        if (status.rateLimited && status.lockedUntil && status.lockedUntil > Date.now()) {
+          setLockUntilMs(status.lockedUntil);
+          setNowTickMs(Date.now());
+          try {
+            localStorage.setItem(USER_LOCK_STORAGE_KEY, String(status.lockedUntil));
+          } catch {
+            // ignore storage errors
+          }
+          setError((prev) => prev || RATE_LIMIT_MESSAGE);
+        } else {
+          setLockUntilMs(null);
+          try {
+            localStorage.removeItem(USER_LOCK_STORAGE_KEY);
+          } catch {
+            // ignore storage errors
+          }
+          setError((prev) => (prev === RATE_LIMIT_MESSAGE ? null : prev));
+        }
+      })
+      .catch(() => {
+        // ignore network check failure
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  // Tick down lockout timer every second and auto-unlock at 00:00
+  useEffect(() => {
+    if (!lockUntilMs) return;
+    const tick = () => {
+      const now = Date.now();
+      setNowTickMs(now);
+      if (now >= lockUntilMs) {
+        setLockUntilMs(null);
+        try {
+          localStorage.removeItem(USER_LOCK_STORAGE_KEY);
+        } catch {
+          // ignore storage errors
+        }
+        setError((prev) => (prev === RATE_LIMIT_MESSAGE ? null : prev));
+      }
+    };
+    tick();
+    const timer = window.setInterval(tick, 1000);
+    return () => window.clearInterval(timer);
+  }, [lockUntilMs]);
 
   // Automatically verify magic link token whenever ?reset_token=... is opened
   useEffect(() => {
@@ -109,7 +200,11 @@ export const LandingAuthView: React.FC<LandingAuthViewProps> = ({
       onClearResetToken();
     }
     setAuthTab(next);
-    setError(null);
+    if (next === 'signin' && lockUntilMs && lockUntilMs > Date.now()) {
+      setError(RATE_LIMIT_MESSAGE);
+    } else {
+      setError(null);
+    }
     setMagicLinkSentInfo(null);
     if (next === 'register') {
       setResetSuccess(null);
@@ -211,6 +306,12 @@ export const LandingAuthView: React.FC<LandingAuthViewProps> = ({
     }
 
     // Standard Sign In or Register
+    if (authTab === 'signin' && lockUntilMs && lockUntilMs > Date.now()) {
+      setNowTickMs(Date.now());
+      setError(RATE_LIMIT_MESSAGE);
+      return;
+    }
+
     setLoading(true);
     try {
       if (authTab === 'signin') {
@@ -221,6 +322,12 @@ export const LandingAuthView: React.FC<LandingAuthViewProps> = ({
             body: JSON.stringify({ identifier, password }),
           }
         );
+        setLockUntilMs(null);
+        try {
+          localStorage.removeItem(USER_LOCK_STORAGE_KEY);
+        } catch {
+          // ignore storage errors
+        }
         onAuthenticated(res.token, res.snapshot);
       } else {
         const res = await apiRequest<{ token: string; snapshot: DashboardSnapshot }>(
@@ -233,7 +340,28 @@ export const LandingAuthView: React.FC<LandingAuthViewProps> = ({
         onAuthenticated(res.token, res.snapshot);
       }
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Could not sign in. Please check your details.');
+      if (
+        authTab === 'signin' &&
+        err instanceof ApiError &&
+        (err.status === 429 || err.rateLimited)
+      ) {
+        const until =
+          err.lockedUntil && err.lockedUntil > Date.now()
+            ? err.lockedUntil
+            : Date.now() + (err.retryAfterSeconds || 600) * 1000;
+        setLockUntilMs(until);
+        setNowTickMs(Date.now());
+        try {
+          localStorage.setItem(USER_LOCK_STORAGE_KEY, String(until));
+        } catch {
+          // ignore storage errors
+        }
+        setError(RATE_LIMIT_MESSAGE);
+      } else {
+        setError(
+          err instanceof Error ? err.message : 'Could not sign in. Please check your details.'
+        );
+      }
     } finally {
       setLoading(false);
     }
@@ -370,7 +498,12 @@ export const LandingAuthView: React.FC<LandingAuthViewProps> = ({
 
               {error && (
                 <div className="mb-5 px-4 py-3 rounded-lg border border-rose-500/30 bg-rose-500/10 text-xs text-rose-700 dark:text-rose-300">
-                  {error}
+                  <div>{error}</div>
+                  {authTab === 'signin' && isSignInLocked && (
+                    <div className="mt-1 text-[10px] leading-none font-mono tabular-nums opacity-80">
+                      Retry in {formatTinyCountdown(remainingLockSeconds)}
+                    </div>
+                  )}
                 </div>
               )}
 
@@ -703,7 +836,7 @@ export const LandingAuthView: React.FC<LandingAuthViewProps> = ({
 
                   <button
                     type="submit"
-                    disabled={loading}
+                    disabled={loading || (authTab === 'signin' && isSignInLocked)}
                     className="w-full py-3.5 px-4 rounded-xl font-display font-extrabold text-sm text-slate-950 bg-gradient-to-r from-cyan-400 via-sky-400 to-indigo-400 hover:opacity-95 disabled:opacity-50 transition-opacity flex items-center justify-center gap-2 cursor-pointer"
                   >
                     <span>

@@ -1,3 +1,23 @@
+export class ApiError extends Error {
+  public status: number;
+  public rateLimited?: boolean;
+  public retryAfterSeconds?: number;
+  public lockedUntil?: number;
+
+  constructor(
+    message: string,
+    status: number,
+    meta?: { rateLimited?: boolean; retryAfterSeconds?: number; lockedUntil?: number }
+  ) {
+    super(message);
+    this.name = 'ApiError';
+    this.status = status;
+    this.rateLimited = meta?.rateLimited;
+    this.retryAfterSeconds = meta?.retryAfterSeconds;
+    this.lockedUntil = meta?.lockedUntil;
+  }
+}
+
 export async function apiRequest<T>(
   path: string,
   options: RequestInit = {},
@@ -18,7 +38,12 @@ export async function apiRequest<T>(
 
   const data = await response.json().catch(() => ({}));
   if (!response.ok) {
-    throw new Error(data.error || `Request failed with status ${response.status}`);
+    throw new ApiError(data.error || `Request failed with status ${response.status}`, response.status, {
+      rateLimited: Boolean(data.rateLimited),
+      retryAfterSeconds:
+        typeof data.retryAfterSeconds === 'number' ? data.retryAfterSeconds : undefined,
+      lockedUntil: typeof data.lockedUntil === 'number' ? data.lockedUntil : undefined,
+    });
   }
   return data as T;
 }

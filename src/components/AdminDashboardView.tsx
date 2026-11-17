@@ -43,7 +43,7 @@ import type {
   UserProfile,
   UserRole,
 } from '../types';
-import { apiRequest } from '../utils/api';
+import { ApiError, apiRequest } from '../utils/api';
 import {
   AdminCampaignsSection,
   AdminConfirmModal,
@@ -2867,8 +2867,18 @@ export const AdminDashboardView: React.FC<AdminDashboardViewProps> = ({
 };
 
 // ============================================================================
-// ADMIN SIGN-IN PORTAL (/admin)
+// ADMIN SIGN-IN & FIRST-TIME VPS ADMIN CREATION PORTAL (/admin)
 // ============================================================================
+const ADMIN_LOCK_STORAGE_KEY = '234mail_login_lock_admin';
+const ADMIN_RATE_LIMIT_MESSAGE = 'Too many tries, retry after 10 minutes.';
+
+function formatAdminTinyCountdown(totalSeconds: number): string {
+  const safe = Math.max(0, Math.ceil(totalSeconds));
+  const mins = Math.floor(safe / 60);
+  const secs = safe % 60;
+  return `${String(mins).padStart(2, '0')}:${String(secs).padStart(2, '0')}`;
+}
+
 interface AdminLoginViewProps {
   onAuthenticatedAdmin: (token: string, snapshot: DashboardSnapshot) => void;
   onNavigateHome: () => void;
@@ -2881,11 +2891,154 @@ export const AdminLoginView: React.FC<AdminLoginViewProps> = ({
   const [identifier, setIdentifier] = useState('');
   const [password, setPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
+
+  // First-time clean VPS admin setup state
+  const [needsInitialSetup, setNeedsInitialSetup] = useState(false);
+  const [setupUsername, setSetupUsername] = useState('');
+  const [setupEmail, setSetupEmail] = useState('');
+  const [setupPassword, setSetupPassword] = useState('');
+  const [setupConfirmPassword, setSetupConfirmPassword] = useState('');
+  const [showSetupPassword, setShowSetupPassword] = useState(false);
+  const [showSetupConfirmPassword, setShowSetupConfirmPassword] = useState(false);
+
   const [loading, setLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const [lockUntilMs, setLockUntilMs] = useState<number | null>(() => {
+    try {
+      const saved = Number(localStorage.getItem(ADMIN_LOCK_STORAGE_KEY) || '0');
+      return saved > Date.now() ? saved : null;
+    } catch {
+      return null;
+    }
+  });
+  const [nowTickMs, setNowTickMs] = useState<number>(() => Date.now());
+  const [error, setError] = useState<string | null>(() => {
+    try {
+      const saved = Number(localStorage.getItem(ADMIN_LOCK_STORAGE_KEY) || '0');
+      return saved > Date.now() ? ADMIN_RATE_LIMIT_MESSAGE : null;
+    } catch {
+      return null;
+    }
+  });
+
+  const remainingLockSeconds =
+    lockUntilMs && lockUntilMs > nowTickMs ? Math.ceil((lockUntilMs - nowTickMs) / 1000) : 0;
+  const isLockedOut = remainingLockSeconds > 0;
+
+  useEffect(() => {
+    let cancelled = false;
+    apiRequest<{
+      rateLimited: boolean;
+      lockedUntil: number | null;
+      retryAfterSeconds: number;
+      needsInitialAdminSetup: boolean;
+    }>('/api/auth/login-status?portal=admin')
+      .then((status) => {
+        if (cancelled) return;
+        if (status.needsInitialAdminSetup) {
+          setNeedsInitialSetup(true);
+          setLockUntilMs(null);
+          setError(null);
+          return;
+        }
+        setNeedsInitialSetup(false);
+        if (status.rateLimited && status.lockedUntil && status.lockedUntil > Date.now()) {
+          setLockUntilMs(status.lockedUntil);
+          setNowTickMs(Date.now());
+          try {
+            localStorage.setItem(ADMIN_LOCK_STORAGE_KEY, String(status.lockedUntil));
+          } catch {
+            // ignore storage errors
+          }
+          setError((prev) => prev || ADMIN_RATE_LIMIT_MESSAGE);
+        } else {
+          setLockUntilMs(null);
+          try {
+            localStorage.removeItem(ADMIN_LOCK_STORAGE_KEY);
+          } catch {
+            // ignore storage errors
+          }
+          setError((prev) => (prev === ADMIN_RATE_LIMIT_MESSAGE ? null : prev));
+        }
+      })
+      .catch(() => {
+        // ignore transient network failure
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!lockUntilMs) return;
+    const tick = () => {
+      const now = Date.now();
+      setNowTickMs(now);
+      if (now >= lockUntilMs) {
+        setLockUntilMs(null);
+        try {
+          localStorage.removeItem(ADMIN_LOCK_STORAGE_KEY);
+        } catch {
+          // ignore storage errors
+        }
+        setError((prev) => (prev === ADMIN_RATE_LIMIT_MESSAGE ? null : prev));
+      }
+    };
+    tick();
+    const timer = window.setInterval(tick, 1000);
+    return () => window.clearInterval(timer);
+  }, [lockUntilMs]);
+
+  const handleSetupFirstAdmin = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setError(null);
+
+    if (setupUsername.trim().length < 2) {
+      setError('Admin username must be at least 2 characters.');
+      return;
+    }
+    if (!setupEmail.trim().includes('@')) {
+      setError('Please enter a valid admin email address.');
+      return;
+    }
+    if (setupPassword.length < 4) {
+      setError('Admin password must be at least 4 characters.');
+      return;
+    }
+    if (setupPassword !== setupConfirmPassword) {
+      setError('Passwords do not match.');
+      return;
+    }
+
+    setLoading(true);
+    try {
+      const res = await apiRequest<{ token: string; snapshot: DashboardSnapshot }>(
+        '/api/auth/setup-first-admin',
+        {
+          method: 'POST',
+          body: JSON.stringify({
+            username: setupUsername.trim(),
+            email: setupEmail.trim(),
+            password: setupPassword,
+          }),
+        }
+      );
+      onAuthenticatedAdmin(res.token, res.snapshot);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Could not create first admin account.');
+    } finally {
+      setLoading(false);
+    }
+  };
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (lockUntilMs && lockUntilMs > Date.now()) {
+      setNowTickMs(Date.now());
+      setError(ADMIN_RATE_LIMIT_MESSAGE);
+      return;
+    }
+
     setError(null);
     setLoading(true);
     try {
@@ -2902,9 +3055,30 @@ export const AdminLoginView: React.FC<AdminLoginViewProps> = ({
         return;
       }
 
+      setLockUntilMs(null);
+      try {
+        localStorage.removeItem(ADMIN_LOCK_STORAGE_KEY);
+      } catch {
+        // ignore storage errors
+      }
       onAuthenticatedAdmin(res.token, res.snapshot);
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Invalid admin credentials.');
+      if (err instanceof ApiError && (err.status === 429 || err.rateLimited)) {
+        const until =
+          err.lockedUntil && err.lockedUntil > Date.now()
+            ? err.lockedUntil
+            : Date.now() + (err.retryAfterSeconds || 600) * 1000;
+        setLockUntilMs(until);
+        setNowTickMs(Date.now());
+        try {
+          localStorage.setItem(ADMIN_LOCK_STORAGE_KEY, String(until));
+        } catch {
+          // ignore storage errors
+        }
+        setError(ADMIN_RATE_LIMIT_MESSAGE);
+      } else {
+        setError(err instanceof Error ? err.message : 'Invalid admin credentials.');
+      }
     } finally {
       setLoading(false);
     }
@@ -2941,71 +3115,180 @@ export const AdminLoginView: React.FC<AdminLoginViewProps> = ({
           <div>
             <div className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md border border-rose-500/35 bg-rose-500/10 text-[11px] font-mono font-bold text-rose-600 dark:text-rose-400 mb-3">
               <Settings className="w-3 h-3" />
-              <span>ADMIN PORTAL</span>
+              <span>{needsInitialSetup ? 'FIRST-TIME SERVER SETUP' : 'ADMIN PORTAL'}</span>
             </div>
             <h1 className="text-2xl font-extrabold font-display tracking-tight text-slate-900 dark:text-white">
-              Admin Sign In
+              {needsInitialSetup ? 'Create First Admin Account' : 'Admin Sign In'}
             </h1>
+            {needsInitialSetup && (
+              <p className="text-xs text-slate-500 dark:text-slate-400 mt-1.5 leading-relaxed">
+                Fresh server detected. Set your primary Administrator username, email, and password
+                to initialize this VPS.
+              </p>
+            )}
           </div>
 
           {error && (
             <div className="px-3.5 py-3 rounded-xl border border-rose-500/35 bg-rose-500/10 text-xs font-mono text-rose-700 dark:text-rose-300">
-              {error}
+              <div>{error}</div>
+              {!needsInitialSetup && isLockedOut && (
+                <div className="mt-1 text-[10px] leading-none font-mono tabular-nums opacity-80">
+                  Retry in {formatAdminTinyCountdown(remainingLockSeconds)}
+                </div>
+              )}
             </div>
           )}
 
-          <form onSubmit={handleSubmit} className="space-y-4">
-            <div>
-              <label className="block text-xs font-mono text-slate-500 dark:text-slate-400 mb-1.5">
-                Admin Username or Email
-              </label>
-              <input
-                type="text"
-                required
-                value={identifier}
-                onChange={(e) => setIdentifier(e.target.value)}
-                placeholder="Enter admin username or email"
-                className="w-full px-3.5 py-2.5 rounded-lg border border-slate-300 dark:border-white/10 bg-slate-50 dark:bg-[#131822] text-sm font-mono text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-cyan-500"
-              />
-            </div>
-
-            <div>
-              <label className="block text-xs font-mono text-slate-500 dark:text-slate-400 mb-1.5">
-                Password
-              </label>
-              <div className="relative">
+          {needsInitialSetup ? (
+            <form onSubmit={handleSetupFirstAdmin} className="space-y-4">
+              <div>
+                <label className="block text-xs font-mono text-slate-500 dark:text-slate-400 mb-1.5">
+                  Admin Username
+                </label>
                 <input
-                  type={showPassword ? 'text' : 'password'}
+                  type="text"
                   required
-                  value={password}
-                  onChange={(e) => setPassword(e.target.value)}
-                  placeholder="••••••••••••"
-                  className="w-full pl-3.5 pr-11 py-2.5 rounded-lg border border-slate-300 dark:border-white/10 bg-slate-50 dark:bg-[#131822] text-sm font-mono text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-cyan-500"
+                  value={setupUsername}
+                  onChange={(e) => setSetupUsername(e.target.value)}
+                  placeholder="e.g. Admin"
+                  className="w-full px-3.5 py-2.5 rounded-lg border border-slate-300 dark:border-white/10 bg-slate-50 dark:bg-[#131822] text-sm font-mono text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-cyan-500"
                 />
-                <button
-                  type="button"
-                  onClick={() => setShowPassword((v) => !v)}
-                  aria-label={showPassword ? 'Hide password' : 'Show password'}
-                  title={showPassword ? 'Hide password' : 'Show password'}
-                  className="absolute right-2 top-1/2 -translate-y-1/2 p-1.5 rounded-md text-slate-500 hover:text-slate-800 dark:hover:text-slate-200 cursor-pointer"
-                >
-                  {showPassword ? (
-                    <EyeOff className="w-4 h-4" />
-                  ) : (
-                    <Eye className="w-4 h-4" />
-                  )}
-                </button>
               </div>
-            </div>
 
-            <button
-              type="submit"
-              disabled={loading}
-              className="w-full py-3 px-4 rounded-xl bg-gradient-to-r from-cyan-400 via-sky-400 to-indigo-400 text-slate-950 font-display font-extrabold text-sm hover:opacity-95 disabled:opacity-50 cursor-pointer"
-            >
-              {loading ? 'Signing in...' : 'Open Admin Dashboard'}
-            </button>
-          </form>
+              <div>
+                <label className="block text-xs font-mono text-slate-500 dark:text-slate-400 mb-1.5">
+                  Admin Email
+                </label>
+                <input
+                  type="email"
+                  required
+                  value={setupEmail}
+                  onChange={(e) => setSetupEmail(e.target.value)}
+                  placeholder="admin@yourdomain.com"
+                  className="w-full px-3.5 py-2.5 rounded-lg border border-slate-300 dark:border-white/10 bg-slate-50 dark:bg-[#131822] text-sm font-mono text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-cyan-500"
+                />
+              </div>
+
+              <div>
+                <label className="block text-xs font-mono text-slate-500 dark:text-slate-400 mb-1.5">
+                  Admin Password
+                </label>
+                <div className="relative">
+                  <input
+                    type={showSetupPassword ? 'text' : 'password'}
+                    required
+                    value={setupPassword}
+                    onChange={(e) => setSetupPassword(e.target.value)}
+                    placeholder="Choose a strong password"
+                    className="w-full pl-3.5 pr-11 py-2.5 rounded-lg border border-slate-300 dark:border-white/10 bg-slate-50 dark:bg-[#131822] text-sm font-mono text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-cyan-500"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => setShowSetupPassword((v) => !v)}
+                    aria-label={showSetupPassword ? 'Hide password' : 'Show password'}
+                    title={showSetupPassword ? 'Hide password' : 'Show password'}
+                    className="absolute right-2 top-1/2 -translate-y-1/2 p-1.5 rounded-md text-slate-500 hover:text-slate-800 dark:hover:text-slate-200 cursor-pointer"
+                  >
+                    {showSetupPassword ? (
+                      <EyeOff className="w-4 h-4" />
+                    ) : (
+                      <Eye className="w-4 h-4" />
+                    )}
+                  </button>
+                </div>
+              </div>
+
+              <div>
+                <label className="block text-xs font-mono text-slate-500 dark:text-slate-400 mb-1.5">
+                  Confirm Password
+                </label>
+                <div className="relative">
+                  <input
+                    type={showSetupConfirmPassword ? 'text' : 'password'}
+                    required
+                    value={setupConfirmPassword}
+                    onChange={(e) => setSetupConfirmPassword(e.target.value)}
+                    placeholder="Re-enter password"
+                    className="w-full pl-3.5 pr-11 py-2.5 rounded-lg border border-slate-300 dark:border-white/10 bg-slate-50 dark:bg-[#131822] text-sm font-mono text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-cyan-500"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => setShowSetupConfirmPassword((v) => !v)}
+                    aria-label={showSetupConfirmPassword ? 'Hide password' : 'Show password'}
+                    title={showSetupConfirmPassword ? 'Hide password' : 'Show password'}
+                    className="absolute right-2 top-1/2 -translate-y-1/2 p-1.5 rounded-md text-slate-500 hover:text-slate-800 dark:hover:text-slate-200 cursor-pointer"
+                  >
+                    {showSetupConfirmPassword ? (
+                      <EyeOff className="w-4 h-4" />
+                    ) : (
+                      <Eye className="w-4 h-4" />
+                    )}
+                  </button>
+                </div>
+              </div>
+
+              <button
+                type="submit"
+                disabled={loading}
+                className="w-full py-3 px-4 rounded-xl bg-gradient-to-r from-cyan-400 via-sky-400 to-indigo-400 text-slate-950 font-display font-extrabold text-sm hover:opacity-95 disabled:opacity-50 cursor-pointer"
+              >
+                {loading ? 'Creating Admin...' : 'Create Admin & Open Dashboard'}
+              </button>
+            </form>
+          ) : (
+            <form onSubmit={handleSubmit} className="space-y-4">
+              <div>
+                <label className="block text-xs font-mono text-slate-500 dark:text-slate-400 mb-1.5">
+                  Admin Username or Email
+                </label>
+                <input
+                  type="text"
+                  required
+                  value={identifier}
+                  onChange={(e) => setIdentifier(e.target.value)}
+                  placeholder="Enter admin username or email"
+                  className="w-full px-3.5 py-2.5 rounded-lg border border-slate-300 dark:border-white/10 bg-slate-50 dark:bg-[#131822] text-sm font-mono text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-cyan-500"
+                />
+              </div>
+
+              <div>
+                <label className="block text-xs font-mono text-slate-500 dark:text-slate-400 mb-1.5">
+                  Password
+                </label>
+                <div className="relative">
+                  <input
+                    type={showPassword ? 'text' : 'password'}
+                    required
+                    value={password}
+                    onChange={(e) => setPassword(e.target.value)}
+                    placeholder="••••••••••••"
+                    className="w-full pl-3.5 pr-11 py-2.5 rounded-lg border border-slate-300 dark:border-white/10 bg-slate-50 dark:bg-[#131822] text-sm font-mono text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-cyan-500"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => setShowPassword((v) => !v)}
+                    aria-label={showPassword ? 'Hide password' : 'Show password'}
+                    title={showPassword ? 'Hide password' : 'Show password'}
+                    className="absolute right-2 top-1/2 -translate-y-1/2 p-1.5 rounded-md text-slate-500 hover:text-slate-800 dark:hover:text-slate-200 cursor-pointer"
+                  >
+                    {showPassword ? (
+                      <EyeOff className="w-4 h-4" />
+                    ) : (
+                      <Eye className="w-4 h-4" />
+                    )}
+                  </button>
+                </div>
+              </div>
+
+              <button
+                type="submit"
+                disabled={loading || isLockedOut}
+                className="w-full py-3 px-4 rounded-xl bg-gradient-to-r from-cyan-400 via-sky-400 to-indigo-400 text-slate-950 font-display font-extrabold text-sm hover:opacity-95 disabled:opacity-50 cursor-pointer"
+              >
+                {loading ? 'Signing in...' : 'Open Admin Dashboard'}
+              </button>
+            </form>
+          )}
 
           <div className="pt-2 border-t border-slate-100 dark:border-white/[0.07] text-center">
             <a
