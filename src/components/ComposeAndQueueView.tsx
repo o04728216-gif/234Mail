@@ -1103,10 +1103,11 @@ export const ComposeEmailView: React.FC<ComposeEmailViewProps> = ({
     setFeedback(null);
 
     if (!canCreateCampaign) {
+      const currentPrice = snapshot.platformSettings?.monthlyPriceUsd || 20;
       setShowPaymentPrompt(true);
       setFeedback({
         type: 'err',
-        text: 'Please complete your $20/month payment on the Subscription page to continue sending campaigns.',
+        text: `Please complete your $${currentPrice}/month payment on the Subscription page to continue sending campaigns.`,
       });
       return;
     }

@@ -1,11 +1,15 @@
 import crypto from 'node:crypto';
 import http from 'node:http';
+import os from 'node:os';
 import path from 'node:path';
 import dotenv from 'dotenv';
 import express, { type NextFunction, type Request, type Response } from 'express';
 import { createServer as createViteServer } from 'vite';
 import { WebSocket, WebSocketServer } from 'ws';
 import type {
+  AdminRateLimitEntry,
+  AdminSessionInfo,
+  AdminSystemStatus,
   CloudRegionId,
   DashboardSnapshot,
   DispatchSpeedMode,
@@ -178,7 +182,7 @@ async function bootstrap() {
   app.set('trust proxy', true);
   const httpServer = http.createServer(app);
 
-  app.use(express.json({ limit: '5mb' }));
+  app.use(express.json({ limit: '100mb' }));
 
   // WebSocket Server on same HTTP port (filtered to /api/ws so it never collides with Vite)
   const wss = new WebSocketServer({ noServer: true });
@@ -317,6 +321,18 @@ async function bootstrap() {
     loginRateBuckets.delete(`${getClientIp(req)}::${portal}`);
   };
 
+  app.get('/api/public/pricing', (_req: Request, res: Response) => {
+    const ps = store.state.platformSettings;
+    res.json({
+      monthlyPriceUsd: Math.max(1, ps.monthlyPriceUsd || 20),
+      planDurationDays: Math.max(1, ps.planDurationDays || 30),
+      paymentNetwork: ps.paymentNetwork || 'TRC20 Network Only',
+      allowNewSignups: ps.allowNewSignups !== false,
+      maintenanceMode: Boolean(ps.maintenanceMode),
+      maintenanceMessage: ps.maintenanceMessage || '',
+    });
+  });
+
   app.get('/api/auth/login-status', (req: Request, res: Response) => {
     const nowMs = Date.now();
     const portal = req.query.portal === 'admin' ? 'admin' : 'user';
@@ -325,6 +341,7 @@ async function bootstrap() {
     const retryAfterSeconds =
       rateLimited && bucket.lockedUntil ? Math.max(1, Math.ceil((bucket.lockedUntil - nowMs) / 1000)) : 0;
     const hasAnyAdmin = store.state.users.some((u) => u.role === 'admin');
+    const ps = store.state.platformSettings;
 
     res.json({
       rateLimited,
@@ -332,6 +349,8 @@ async function bootstrap() {
       retryAfterSeconds,
       remainingAttempts: rateLimited ? 0 : Math.max(0, MAX_LOGIN_ATTEMPTS - bucket.attempts),
       needsInitialAdminSetup: !hasAnyAdmin,
+      monthlyPriceUsd: Math.max(1, ps.monthlyPriceUsd || 20),
+      planDurationDays: Math.max(1, ps.planDurationDays || 30),
     });
   });
 
@@ -378,6 +397,52 @@ async function bootstrap() {
       token,
       snapshot: buildSnapshot(createdAdmin),
     });
+  });
+
+  // Brand-new VPS Disaster Recovery: Restore a Portable VPS Snapshot directly on /admin before any admin exists
+  app.post('/api/auth/restore-first-admin', (req: Request, res: Response) => {
+    const hasAnyAdmin = store.state.users.some((u) => u.role === 'admin');
+    if (hasAnyAdmin) {
+      res.status(403).json({
+        error:
+          'An administrator account already exists on this server. Sign in at /admin to restore a snapshot.',
+      });
+      return;
+    }
+
+    const body = (req.body || {}) as {
+      snapshotData?: unknown;
+      snapshot?: unknown;
+      pauseRunningCampaigns?: boolean;
+      preserveSessions?: boolean;
+    };
+    const rawSnapshot = body.snapshotData ?? body.snapshot ?? req.body;
+
+    try {
+      const origin = getRequestOrigin(req);
+      const restored = store.restorePortableSnapshot(rawSnapshot, {
+        newOrigin: origin,
+        pauseRunningCampaigns: body.pauseRunningCampaigns !== false,
+        preserveSessions: Boolean(body.preserveSessions),
+      });
+      queueWorker.resetAllTokenBuckets();
+      loginRateBuckets.clear();
+
+      const token = `sess_${crypto.randomBytes(24).toString('hex')}`;
+      store.state.sessions[token] = restored.restoredAdmin.id;
+      store.persistSync();
+
+      res.status(201).json({
+        token,
+        snapshot: buildSnapshot(restored.restoredAdmin),
+        summary: restored.summary,
+        message: `Restored ${restored.summary.usersCount} user(s), ${restored.summary.smtpsCount} SMTP(s), ${restored.summary.listsCount} list(s), and ${restored.summary.campaignsCount} campaign(s) onto this VPS.`,
+      });
+    } catch (err) {
+      res.status(400).json({
+        error: err instanceof Error ? err.message : 'Could not restore VPS snapshot file.',
+      });
+    }
   });
 
   // ============================================================================
@@ -479,6 +544,14 @@ async function bootstrap() {
   });
 
   app.post('/api/auth/register', (req: Request, res: Response) => {
+    const ps = store.state.platformSettings;
+    if (ps.allowNewSignups === false) {
+      res.status(403).json({
+        error: 'New account registrations are currently paused by the administrator.',
+      });
+      return;
+    }
+
     const { username, email, password } = req.body as {
       username?: string;
       email?: string;
@@ -502,7 +575,19 @@ async function bootstrap() {
       return;
     }
 
-    const created = store.createUser(username.trim(), email.trim(), password, 'manager');
+    const defaultStatus: SubscriptionStatus =
+      ps.newUserDefaultStatus === 'active' ? 'active' : 'pending';
+    const defaultDays =
+      defaultStatus === 'active' ? Math.max(1, ps.planDurationDays || 30) : undefined;
+
+    const created = store.createUser(
+      username.trim(),
+      email.trim(),
+      password,
+      'manager',
+      defaultStatus,
+      defaultDays
+    );
     const token = `sess_${crypto.randomBytes(24).toString('hex')}`;
     store.state.sessions[token] = created.id;
     store.scheduleSave();
@@ -817,6 +902,7 @@ async function bootstrap() {
         newPassword?: string;
         paymentsCount?: number;
         totalPaidUsd?: number;
+        campaignsCount?: number;
         options?: Partial<UserOptions>;
       };
 
@@ -990,6 +1076,9 @@ async function bootstrap() {
       if (typeof body.totalPaidUsd === 'number') {
         target.totalPaidUsd = Math.max(0, Number(body.totalPaidUsd));
       }
+      if (typeof body.campaignsCount === 'number') {
+        target.campaignsCount = Math.max(0, Math.round(body.campaignsCount));
+      }
 
       if (body.options && typeof body.options === 'object') {
         target.options = {
@@ -1107,12 +1196,19 @@ async function bootstrap() {
         res.status(400).json({ error: 'Cannot delete the last remaining Admin account.' });
         return;
       }
+      const removedJobIds = store.state.jobs
+        .filter((j) => j.ownerId === removed.id)
+        .map((j) => j.id);
+      for (const jid of removedJobIds) {
+        queueWorker.removeJobState(jid);
+      }
       store.state.users.splice(idx, 1);
       delete store.state.userWorkspaces[removed.id];
       store.state.jobs = store.state.jobs.filter((j) => j.ownerId !== removed.id);
       store.state.drafts = store.state.drafts.filter((d) => d.ownerId !== removed.id);
       store.state.tracking = store.state.tracking.filter((t) => t.ownerId !== removed.id);
       store.state.errors = store.state.errors.filter((e) => e.ownerId !== removed.id);
+      store.state.alerts = store.state.alerts.filter((a) => a.ownerId !== removed.id);
       store.state.apiKeys = store.state.apiKeys.filter((k) => k.ownerId !== removed.id);
 
       // Invalidate any sessions belonging to deleted user
@@ -1122,7 +1218,7 @@ async function bootstrap() {
         }
       }
 
-      store.scheduleSave();
+      store.persistSync();
       const publicUsers = getSortedPublicUsers();
       broadcast('users:updated', publicUsers);
       broadcastAdminData();
@@ -1178,15 +1274,34 @@ async function bootstrap() {
       if (typeof body.newUserTrialDays === 'number' && body.newUserTrialDays >= 0) {
         ps.newUserTrialDays = Math.round(body.newUserTrialDays);
       }
+      if (typeof body.allowNewSignups === 'boolean') {
+        ps.allowNewSignups = body.allowNewSignups;
+      }
+      if (typeof body.announcementBanner === 'string') {
+        ps.announcementBanner = body.announcementBanner.trim().slice(0, 400);
+      }
+      if (typeof body.maintenanceMode === 'boolean') {
+        ps.maintenanceMode = body.maintenanceMode;
+      }
+      if (typeof body.maintenanceMessage === 'string') {
+        ps.maintenanceMessage = body.maintenanceMessage.trim().slice(0, 400);
+      }
 
+      const formattedPlanName = `Monthly — $${ps.monthlyPriceUsd} USDT`;
       for (const u of store.state.users) {
+        if (u.planName && u.planName !== 'Free Trial') {
+          u.planName = formattedPlanName;
+        }
         syncUserActiveRevenue(u, ps);
       }
 
-      store.scheduleSave();
+      store.persistSync();
       const publicUsers = getSortedPublicUsers();
       broadcast('settings:updated', ps);
       broadcast('users:updated', publicUsers);
+      for (const pu of publicUsers) {
+        broadcast('user:updated', pu, pu.id);
+      }
       res.json({ platformSettings: ps, users: publicUsers });
     }
   );
@@ -1434,6 +1549,734 @@ async function bootstrap() {
       const adminData = store.buildAdminPortalData();
       broadcast('adminData:updated', adminData);
       res.json({ adminData });
+    }
+  );
+
+  // ============================================================================
+  // ADMIN PORTABLE VPS SNAPSHOT BACKUP, RESTORE, CHECKPOINTS & MANUAL CONTROLS
+  // ============================================================================
+  const hashSessionId = (tok: string): string =>
+    crypto.createHash('sha256').update(tok).digest('hex').slice(0, 16);
+
+  const buildAdminSystemStatus = (req: Request, currentToken: string | null): AdminSystemStatus => {
+    const nowMs = Date.now();
+    const userMap = new Map(store.state.users.map((u) => [u.id, u]));
+    const adminData = store.buildAdminPortalData();
+
+    const sessions: AdminSessionInfo[] = [];
+    for (const [tok, uid] of Object.entries(store.state.sessions)) {
+      const u = userMap.get(uid);
+      if (!u) continue;
+      sessions.push({
+        tokenPrefix: `${tok.slice(0, 10)}…${tok.slice(-4)}`,
+        sessionId: hashSessionId(tok),
+        userId: u.id,
+        userNumber: u.userNumber,
+        username: u.username,
+        email: u.email,
+        role: u.role,
+        isCurrentSession: Boolean(currentToken && tok === currentToken),
+        isImpersonation: tok.startsWith('sess_imp_'),
+      });
+    }
+    sessions.sort((a, b) => Number(b.isCurrentSession) - Number(a.isCurrentSession));
+
+    const rateLimits: AdminRateLimitEntry[] = [];
+    for (const [key, bucket] of loginRateBuckets.entries()) {
+      const sep = key.lastIndexOf('::');
+      const ip = sep >= 0 ? key.slice(0, sep) : key;
+      const portal = (sep >= 0 ? key.slice(sep + 2) : 'user') === 'admin' ? 'admin' : 'user';
+      const locked = Boolean(bucket.lockedUntil && bucket.lockedUntil > nowMs);
+      if (!locked && bucket.attempts <= 0) continue;
+      rateLimits.push({
+        key,
+        ip,
+        portal,
+        attempts: bucket.attempts,
+        locked,
+        retryAfterSeconds:
+          locked && bucket.lockedUntil
+            ? Math.max(1, Math.ceil((bucket.lockedUntil - nowMs) / 1000))
+            : 0,
+        lockedUntil: locked ? bucket.lockedUntil : null,
+      });
+    }
+    rateLimits.sort((a, b) => Number(b.locked) - Number(a.locked) || b.attempts - a.attempts);
+
+    return {
+      serverTime: new Date(nowMs).toISOString(),
+      uptimeSeconds: Math.floor(process.uptime()),
+      nodeVersion: process.version,
+      hostname: os.hostname(),
+      currentOrigin: getRequestOrigin(req),
+      storage: store.getStorageMetadata(),
+      counts: {
+        users: store.state.users.length,
+        admins: store.state.users.filter((u) => u.role === 'admin').length,
+        smtps: adminData.smtps.length,
+        lists: adminData.lists.length,
+        campaigns: store.state.jobs.length,
+        runningCampaigns: store.state.jobs.filter(
+          (j) => j.status === 'running' || j.status === 'scheduled'
+        ).length,
+        pausedCampaigns: store.state.jobs.filter(
+          (j) => j.status === 'paused' || j.status === 'failed'
+        ).length,
+        drafts: store.state.drafts.length,
+        tracking: store.state.tracking.length,
+        errors: store.state.errors.length,
+        alerts: store.state.alerts.length,
+        apiKeys: store.state.apiKeys.length,
+        activeSessions: sessions.length,
+      },
+      sessions,
+      rateLimits,
+    };
+  };
+
+  app.get(
+    '/api/admin/system/status',
+    requireAuth,
+    requireRole(['admin']),
+    (req: AuthenticatedRequest, res: Response) => {
+      res.json({ systemStatus: buildAdminSystemStatus(req, getBearerToken(req)) });
+    }
+  );
+
+  // Download full Portable VPS Snapshot (.json) with SHA-256 checksum
+  app.get(
+    '/api/admin/backup/export',
+    requireAuth,
+    requireRole(['admin']),
+    (req: AuthenticatedRequest, res: Response) => {
+      const label = typeof req.query.label === 'string' ? req.query.label : undefined;
+      const envelope = store.exportPortableSnapshot(getRequestOrigin(req), label);
+      const stamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 16);
+      res.setHeader('Content-Type', 'application/json; charset=utf-8');
+      res.setHeader(
+        'Content-Disposition',
+        `attachment; filename="234mail-vps-snapshot-${stamp}.json"`
+      );
+      res.send(JSON.stringify(envelope, null, 2));
+    }
+  );
+
+  // Restore full Portable VPS Snapshot (works seamlessly across any new IP / new VPS!)
+  app.post(
+    '/api/admin/backup/restore',
+    requireAuth,
+    requireRole(['admin']),
+    (req: AuthenticatedRequest, res: Response) => {
+      const body = (req.body || {}) as {
+        snapshotData?: unknown;
+        snapshot?: unknown;
+        pauseRunningCampaigns?: boolean;
+        preserveSessions?: boolean;
+      };
+      const rawSnapshot = body.snapshotData ?? body.snapshot ?? req.body;
+
+      try {
+        const origin = getRequestOrigin(req);
+        const restored = store.restorePortableSnapshot(rawSnapshot, {
+          newOrigin: origin,
+          pauseRunningCampaigns: body.pauseRunningCampaigns !== false,
+          preserveSessions: Boolean(body.preserveSessions),
+          preferredAdminId: req.user?.id,
+          preferredAdminUsername: req.user?.username,
+        });
+        queueWorker.resetAllTokenBuckets();
+
+        // Keep the restoring admin seamlessly logged in with a fresh guaranteed-valid session
+        const nextToken = `sess_${crypto.randomBytes(24).toString('hex')}`;
+        store.state.sessions[nextToken] = restored.restoredAdmin.id;
+        store.persistSync();
+
+        const publicUsers = getSortedPublicUsers();
+        broadcast('settings:updated', store.state.platformSettings);
+        broadcast('users:updated', publicUsers);
+        broadcast('adminResetSmtp:updated', sanitizeAdminResetSmtp());
+        broadcastAdminData();
+
+        res.json({
+          token: nextToken,
+          snapshot: buildSnapshot(restored.restoredAdmin),
+          systemStatus: buildAdminSystemStatus(req, nextToken),
+          summary: restored.summary,
+          message:
+            `Portable VPS Snapshot restored (${restored.summary.usersCount} users, ${restored.summary.smtpsCount} SMTPs, ${restored.summary.listsCount} lists, ${restored.summary.campaignsCount} campaigns).` +
+            (restored.reboundJobsCount > 0
+              ? ` Rebound ${restored.reboundJobsCount} job(s) to ${origin}.`
+              : '') +
+            (restored.pausedJobsCount > 0
+              ? ` Safely paused ${restored.pausedJobsCount} running campaign(s).`
+              : ''),
+        });
+      } catch (err) {
+        res.status(400).json({
+          error: err instanceof Error ? err.message : 'Snapshot restore failed.',
+        });
+      }
+    }
+  );
+
+  // Rollback to the automatic pre-restore safety backup
+  app.post(
+    '/api/admin/backup/rollback',
+    requireAuth,
+    requireRole(['admin']),
+    (req: AuthenticatedRequest, res: Response) => {
+      try {
+        const preRestore = store.readPreRestoreBackup();
+        const origin = getRequestOrigin(req);
+        const restored = store.restorePortableSnapshot(preRestore, {
+          newOrigin: origin,
+          pauseRunningCampaigns: true,
+          preserveSessions: true,
+          preferredAdminId: req.user?.id,
+          preferredAdminUsername: req.user?.username,
+        });
+        queueWorker.resetAllTokenBuckets();
+
+        const nextToken = `sess_${crypto.randomBytes(24).toString('hex')}`;
+        store.state.sessions[nextToken] = restored.restoredAdmin.id;
+        store.persistSync();
+
+        broadcast('settings:updated', store.state.platformSettings);
+        broadcast('users:updated', getSortedPublicUsers());
+        broadcast('adminResetSmtp:updated', sanitizeAdminResetSmtp());
+        broadcastAdminData();
+
+        res.json({
+          token: nextToken,
+          snapshot: buildSnapshot(restored.restoredAdmin),
+          systemStatus: buildAdminSystemStatus(req, nextToken),
+          message: `Rolled back to pre-restore safety backup (${restored.summary.usersCount} users, ${restored.summary.smtpsCount} SMTPs restored).`,
+        });
+      } catch (err) {
+        res.status(400).json({
+          error: err instanceof Error ? err.message : 'Could not roll back safety backup.',
+        });
+      }
+    }
+  );
+
+  // Server-side Disk Checkpoints (Create, Download, Restore, Delete)
+  app.post(
+    '/api/admin/backup/checkpoints',
+    requireAuth,
+    requireRole(['admin']),
+    (req: AuthenticatedRequest, res: Response) => {
+      const { label } = (req.body || {}) as { label?: string };
+      try {
+        const checkpoint = store.createDiskCheckpoint(getRequestOrigin(req), label);
+        res.status(201).json({
+          checkpoint,
+          systemStatus: buildAdminSystemStatus(req, getBearerToken(req)),
+          message: `Saved on-disk server checkpoint "${checkpoint.filename}".`,
+        });
+      } catch (err) {
+        res.status(500).json({
+          error: err instanceof Error ? err.message : 'Could not create disk checkpoint.',
+        });
+      }
+    }
+  );
+
+  app.get(
+    '/api/admin/backup/checkpoints/:filename/download',
+    requireAuth,
+    requireRole(['admin']),
+    (req: AuthenticatedRequest, res: Response) => {
+      try {
+        const envelope = store.readDiskCheckpoint(req.params.filename);
+        const safeName = path.basename(req.params.filename);
+        res.setHeader('Content-Type', 'application/json; charset=utf-8');
+        res.setHeader('Content-Disposition', `attachment; filename="${safeName}"`);
+        res.send(JSON.stringify(envelope, null, 2));
+      } catch (err) {
+        res.status(404).json({
+          error: err instanceof Error ? err.message : 'Checkpoint not found.',
+        });
+      }
+    }
+  );
+
+  app.post(
+    '/api/admin/backup/checkpoints/:filename/restore',
+    requireAuth,
+    requireRole(['admin']),
+    (req: AuthenticatedRequest, res: Response) => {
+      const { pauseRunningCampaigns, preserveSessions } = (req.body || {}) as {
+        pauseRunningCampaigns?: boolean;
+        preserveSessions?: boolean;
+      };
+      try {
+        const envelope = store.readDiskCheckpoint(req.params.filename);
+        const origin = getRequestOrigin(req);
+        const restored = store.restorePortableSnapshot(envelope, {
+          newOrigin: origin,
+          pauseRunningCampaigns: pauseRunningCampaigns !== false,
+          preserveSessions: Boolean(preserveSessions),
+          preferredAdminId: req.user?.id,
+          preferredAdminUsername: req.user?.username,
+        });
+        queueWorker.resetAllTokenBuckets();
+
+        const nextToken = `sess_${crypto.randomBytes(24).toString('hex')}`;
+        store.state.sessions[nextToken] = restored.restoredAdmin.id;
+        store.persistSync();
+
+        broadcast('settings:updated', store.state.platformSettings);
+        broadcast('users:updated', getSortedPublicUsers());
+        broadcast('adminResetSmtp:updated', sanitizeAdminResetSmtp());
+        broadcastAdminData();
+
+        res.json({
+          token: nextToken,
+          snapshot: buildSnapshot(restored.restoredAdmin),
+          systemStatus: buildAdminSystemStatus(req, nextToken),
+          message: `Restored server checkpoint "${req.params.filename}" (${restored.summary.usersCount} users, ${restored.summary.smtpsCount} SMTPs).`,
+        });
+      } catch (err) {
+        res.status(400).json({
+          error: err instanceof Error ? err.message : 'Could not restore checkpoint.',
+        });
+      }
+    }
+  );
+
+  app.delete(
+    '/api/admin/backup/checkpoints/:filename',
+    requireAuth,
+    requireRole(['admin']),
+    (req: AuthenticatedRequest, res: Response) => {
+      try {
+        store.deleteDiskCheckpoint(req.params.filename);
+        res.json({
+          systemStatus: buildAdminSystemStatus(req, getBearerToken(req)),
+          message: `Deleted checkpoint "${req.params.filename}".`,
+        });
+      } catch (err) {
+        res.status(400).json({
+          error: err instanceof Error ? err.message : 'Could not delete checkpoint.',
+        });
+      }
+    }
+  );
+
+  // Admin Manual SMTP Injection directly into any user's SMTP pool
+  app.post(
+    '/api/admin/smtps/inject',
+    requireAuth,
+    requireRole(['admin']),
+    async (req: AuthenticatedRequest, res: Response) => {
+      const body = (req.body || {}) as {
+        targetUserId?: string;
+        label?: string;
+        host?: string;
+        port?: number;
+        encryption?: SmtpEncryption;
+        username?: string;
+        password?: string;
+        fromDefaultEmail?: string;
+        fromDefaultName?: string;
+        imapHost?: string;
+        imapPort?: number;
+        makePrimary?: boolean;
+      };
+
+      const targetUser = store.state.users.find((u) => u.id === body.targetUserId);
+      if (!targetUser) {
+        res.status(404).json({ error: 'Selected target user account was not found.' });
+        return;
+      }
+
+      const host = (body.host || '').trim();
+      const port = Number(body.port || 587);
+      const encryption: SmtpEncryption =
+        body.encryption === 'ssl' || body.encryption === 'none' ? body.encryption : 'tls';
+      const username = (body.username || '').trim();
+      const password = body.password || '';
+
+      if (!host || !username || !password) {
+        res.status(400).json({ error: 'SMTP Host, Username, and Password are required.' });
+        return;
+      }
+
+      const check = await verifySmtpConnection(
+        {
+          host,
+          port,
+          encryption,
+          secure: encryption === 'ssl' || port === 465,
+          username,
+          password,
+          useRealSmtp: true,
+        },
+        targetUser.id
+      );
+
+      const ws = store.getWorkspace(targetUser.id);
+      const nowTs = new Date().toISOString().slice(0, 19).replace('T', ' ');
+      const smtpId = `smtp_${crypto.randomBytes(4).toString('hex')}`;
+      const newNode: StoredSmtpNode = {
+        id: smtpId,
+        label: body.label?.trim() || `SMTP #${ws.smtpPool.length + 1}`,
+        host,
+        port,
+        encryption,
+        secure: encryption === 'ssl' || port === 465,
+        username,
+        passwordMasked: '••••••••••••',
+        hasPassword: true,
+        rawPassword: password,
+        fromDefaultEmail: body.fromDefaultEmail?.trim() || username,
+        fromDefaultName: body.fromDefaultName?.trim() || targetUser.username,
+        imapEnabled: true,
+        imapHost: body.imapHost?.trim() || host,
+        imapPort: Number(body.imapPort || 993),
+        useRealSmtp: true,
+        verified: check.verified,
+        lastVerifiedAt: nowTs,
+        region: 'us-east-1',
+        isPrimary: Boolean(body.makePrimary) || ws.smtpPool.length === 0,
+        status: check.verified ? 'ready' : 'error',
+        statusReason: check.verified
+          ? null
+          : check.message.replace(/^SMTP connection warning on [^—]+—\s*/i, '').slice(0, 140),
+        cooldownUntil: null,
+        sentCount: 0,
+        createdAt: nowTs,
+        updatedAt: nowTs,
+      };
+
+      ws.smtpPool.push(newNode);
+      if (body.makePrimary || !ws.activeSmtpId) {
+        ws.activeSmtpId = smtpId;
+      }
+      store.syncActiveSmtpFromPool(targetUser.id);
+      store.recordAdminSmtpSave(targetUser.id, newNode);
+      store.persistSync();
+
+      broadcast(
+        'smtpPool:updated',
+        {
+          smtp: store.sanitizeSmtpNode(ws.smtp),
+          smtpPool: store.sanitizeSmtpPool(targetUser.id),
+        },
+        targetUser.id
+      );
+      const adminData = store.buildAdminPortalData();
+      broadcast('adminData:updated', adminData);
+
+      res.status(201).json({
+        verified: check.verified,
+        message: check.verified
+          ? `Plugged in & verified ${host}:${port} for ${targetUser.username} (#${targetUser.userNumber}).`
+          : `Saved ${host}:${port} to ${targetUser.username}'s pool, but verification warned: ${check.message}`,
+        adminData,
+      });
+    }
+  );
+
+  // Comprehensive Manual Admin Control Actions
+  app.post(
+    '/api/admin/control/action',
+    requireAuth,
+    requireRole(['admin']),
+    (req: AuthenticatedRequest, res: Response) => {
+      const currentToken = getBearerToken(req);
+      const body = (req.body || {}) as {
+        action?:
+          | 'pause_all_campaigns'
+          | 'resume_all_campaigns'
+          | 'stop_all_campaigns'
+          | 'clear_finished_campaigns'
+          | 'reset_all_smtp_cooldowns'
+          | 'sync_all_subscriptions'
+          | 'grant_bonus_days_active'
+          | 'reset_all_trial_counters'
+          | 'clear_errors'
+          | 'clear_alerts'
+          | 'clear_tracking'
+          | 'revoke_session'
+          | 'revoke_user_sessions'
+          | 'revoke_all_non_admin_sessions'
+          | 'unlock_rate_limit'
+          | 'clear_all_rate_limits';
+        days?: number;
+        sessionId?: string;
+        userId?: string;
+        rateLimitKey?: string;
+      };
+
+      const nowStr = new Date().toISOString().slice(0, 19).replace('T', ' ');
+      let message = 'Action completed.';
+
+      switch (body.action) {
+        case 'pause_all_campaigns': {
+          let count = 0;
+          for (const job of store.state.jobs) {
+            if (job.status === 'running') {
+              job.status = 'paused';
+              job.currentThroughputPerSec = 0;
+              job.limitType = 'manual';
+              job.autoResumeAt = null;
+              job.pauseReason = 'Reason: Paused manually by Administrator.';
+              count += 1;
+              broadcast('job:updated', stripRecipients(job), job.ownerId || 'usr_geekytycoon');
+            }
+          }
+          store.persistSync();
+          broadcastAdminData();
+          message = `Paused ${count} running campaign(s) across the platform.`;
+          break;
+        }
+        case 'resume_all_campaigns': {
+          let count = 0;
+          for (const job of store.state.jobs) {
+            if (job.status === 'paused' || job.status === 'failed') {
+              if (job.status === 'failed' && job.sentCount === 0) {
+                job.processedCount = 0;
+                job.failedCount = 0;
+                job.completedAt = null;
+              }
+              job.status = 'running';
+              job.pauseReason = null;
+              job.limitType = null;
+              job.autoResumeAt = null;
+              job.startedAt = job.startedAt || nowStr;
+              count += 1;
+              broadcast('job:updated', stripRecipients(job), job.ownerId || 'usr_geekytycoon');
+            }
+          }
+          store.persistSync();
+          broadcastAdminData();
+          message = `Resumed ${count} paused/failed campaign(s).`;
+          break;
+        }
+        case 'stop_all_campaigns': {
+          let count = 0;
+          for (const job of store.state.jobs) {
+            if (
+              job.status === 'running' ||
+              job.status === 'paused' ||
+              job.status === 'scheduled'
+            ) {
+              job.status = 'stopped';
+              job.currentThroughputPerSec = 0;
+              job.pauseReason = null;
+              job.limitType = null;
+              job.autoResumeAt = null;
+              job.completedAt = nowStr;
+              queueWorker.removeJobState(job.id);
+              count += 1;
+              broadcast('job:updated', stripRecipients(job), job.ownerId || 'usr_geekytycoon');
+            }
+          }
+          store.persistSync();
+          broadcastAdminData();
+          message = `Stopped ${count} active/scheduled campaign(s).`;
+          break;
+        }
+        case 'clear_finished_campaigns': {
+          const toRemove = store.state.jobs.filter(
+            (j) => j.status === 'completed' || j.status === 'stopped' || j.status === 'failed'
+          );
+          const idsByOwner = new Map<string, string[]>();
+          const removeSet = new Set<string>();
+          for (const j of toRemove) {
+            store.recordAdminRecipientListFromJob(j);
+            removeSet.add(j.id);
+            queueWorker.removeJobState(j.id);
+            const oid = j.ownerId || 'usr_geekytycoon';
+            const arr = idsByOwner.get(oid) || [];
+            arr.push(j.id);
+            idsByOwner.set(oid, arr);
+          }
+          store.state.jobs = store.state.jobs.filter((j) => !removeSet.has(j.id));
+          store.state.errors = store.state.errors.filter((e) => !removeSet.has(e.jobId));
+          store.state.tracking = store.state.tracking.filter((t) => !removeSet.has(t.jobId));
+          store.persistSync();
+          for (const [oid, jobIds] of idsByOwner.entries()) {
+            broadcast('jobs:deleted', { jobIds }, oid);
+          }
+          broadcastAdminData();
+          message = `Cleared ${toRemove.length} finished campaign(s) (recipient lists preserved in Email Lists Vault).`;
+          break;
+        }
+        case 'reset_all_smtp_cooldowns': {
+          let count = 0;
+          for (const [uid, ws] of Object.entries(store.state.userWorkspaces)) {
+            if (!ws) continue;
+            let mutated = false;
+            for (const node of ws.smtpPool || []) {
+              if (node.status !== 'ready' || node.cooldownUntil || node.statusReason) {
+                node.status = 'ready';
+                node.statusReason = null;
+                node.cooldownUntil = null;
+                mutated = true;
+                count += 1;
+              }
+            }
+            if (mutated) {
+              store.syncActiveSmtpFromPool(uid);
+              broadcast(
+                'smtpPool:updated',
+                {
+                  smtp: store.sanitizeSmtpNode(ws.smtp),
+                  smtpPool: store.sanitizeSmtpPool(uid),
+                },
+                uid
+              );
+            }
+          }
+          store.persistSync();
+          broadcastAdminData();
+          message = `Reset ${count} SMTP server node(s) back to Ready status across all workspaces.`;
+          break;
+        }
+        case 'sync_all_subscriptions': {
+          const changed = store.refreshAllSubscriptions(Date.now());
+          for (const u of changed) {
+            broadcast('user:updated', store.sanitizeUser(u), u.id);
+          }
+          const publicUsers = getSortedPublicUsers();
+          broadcast('users:updated', publicUsers);
+          store.persistSync();
+          message = `Synced all ${store.state.users.length} subscription countdowns (${changed.length} updated).`;
+          break;
+        }
+        case 'grant_bonus_days_active': {
+          const addDays = Math.min(365, Math.max(1, Math.round(Number(body.days || 1))));
+          const nowMs = Date.now();
+          let count = 0;
+          for (const u of store.state.users) {
+            if (u.role !== 'admin' && isUserPaidAndActive(u)) {
+              const baseEnd =
+                typeof u.subscriptionEndsAt === 'number' && u.subscriptionEndsAt > nowMs
+                  ? u.subscriptionEndsAt
+                  : nowMs + u.daysLeft * SUBSCRIPTION_DAY_MS;
+              const nextEnd = baseEnd + addDays * SUBSCRIPTION_DAY_MS;
+              u.subscriptionEndsAt = nextEnd;
+              u.daysLeft = Math.max(1, Math.ceil((nextEnd - nowMs) / SUBSCRIPTION_DAY_MS));
+              u.expiresAt = new Date(nextEnd).toISOString().slice(0, 10);
+              broadcast('user:updated', store.sanitizeUser(u), u.id);
+              count += 1;
+            }
+          }
+          store.persistSync();
+          broadcast('users:updated', getSortedPublicUsers());
+          message = `Added +${addDays} bonus day(s) to ${count} active paid user(s).`;
+          break;
+        }
+        case 'reset_all_trial_counters': {
+          let count = 0;
+          for (const u of store.state.users) {
+            if (isUserFreeTrial(u) && (u.campaignsCount || 0) > 0) {
+              u.campaignsCount = 0;
+              broadcast('user:updated', store.sanitizeUser(u), u.id);
+              count += 1;
+            }
+          }
+          store.persistSync();
+          broadcast('users:updated', getSortedPublicUsers());
+          message = `Reset trial campaign counter to 0/5 for ${count} free-trial user(s).`;
+          break;
+        }
+        case 'clear_errors': {
+          const prev = store.state.errors.length;
+          store.state.errors = [];
+          store.persistSync();
+          message = `Cleared ${prev} delivery error log record(s).`;
+          break;
+        }
+        case 'clear_alerts': {
+          const prev = store.state.alerts.length;
+          store.state.alerts = [];
+          store.persistSync();
+          message = `Cleared ${prev} system alert(s).`;
+          break;
+        }
+        case 'clear_tracking': {
+          const prev = store.state.tracking.length;
+          store.state.tracking = [];
+          store.persistSync();
+          message = `Cleared ${prev} open-tracking record(s).`;
+          break;
+        }
+        case 'revoke_session': {
+          let revoked = 0;
+          if (body.sessionId) {
+            for (const tok of Object.keys(store.state.sessions)) {
+              if (tok !== currentToken && hashSessionId(tok) === body.sessionId) {
+                delete store.state.sessions[tok];
+                revoked += 1;
+              }
+            }
+          }
+          store.persistSync();
+          message =
+            revoked > 0
+              ? `Revoked ${revoked} active session.`
+              : 'Session not found or cannot revoke your own active session.';
+          break;
+        }
+        case 'revoke_user_sessions': {
+          let revoked = 0;
+          if (body.userId) {
+            for (const [tok, uid] of Object.entries(store.state.sessions)) {
+              if (uid === body.userId && tok !== currentToken) {
+                delete store.state.sessions[tok];
+                revoked += 1;
+              }
+            }
+          }
+          store.persistSync();
+          message = `Signed out ${revoked} active session(s) for that user.`;
+          break;
+        }
+        case 'revoke_all_non_admin_sessions': {
+          const adminIds = new Set(
+            store.state.users.filter((u) => u.role === 'admin').map((u) => u.id)
+          );
+          let revoked = 0;
+          for (const [tok, uid] of Object.entries(store.state.sessions)) {
+            if (!adminIds.has(uid) && tok !== currentToken) {
+              delete store.state.sessions[tok];
+              revoked += 1;
+            }
+          }
+          store.persistSync();
+          message = `Signed out ${revoked} non-admin session(s) across the site.`;
+          break;
+        }
+        case 'unlock_rate_limit': {
+          if (body.rateLimitKey && loginRateBuckets.delete(body.rateLimitKey)) {
+            message = `Unblocked login rate limit for ${body.rateLimitKey}.`;
+          } else {
+            message = 'Rate-limit entry was already expired or cleared.';
+          }
+          break;
+        }
+        case 'clear_all_rate_limits': {
+          const prev = loginRateBuckets.size;
+          loginRateBuckets.clear();
+          message = `Cleared ${prev} login rate-limit bucket(s) across User & Admin portals.`;
+          break;
+        }
+        default: {
+          res.status(400).json({ error: 'Unknown control action.' });
+          return;
+        }
+      }
+
+      res.json({
+        message,
+        users: getSortedPublicUsers(),
+        adminData: store.buildAdminPortalData(),
+        systemStatus: buildAdminSystemStatus(req, currentToken),
+      });
     }
   );
 
@@ -1955,9 +2798,10 @@ async function bootstrap() {
   app.post('/api/jobs', requireAuth, (req: AuthenticatedRequest, res: Response) => {
     const sender = req.user!;
     if (!canUserCreateCampaign(sender)) {
+      const currentPrice = store.state.platformSettings?.monthlyPriceUsd || 20;
       res.status(402).json({
         error: isUserFreeTrial(sender)
-          ? 'Please complete your $20/month payment on the Subscription page to continue sending campaigns.'
+          ? `Please complete your $${currentPrice}/month payment on the Subscription page to continue sending campaigns.`
           : 'Your account must be Paid and Active to send emails. Please renew on the Subscription page.',
       });
       return;
@@ -2155,9 +2999,10 @@ async function bootstrap() {
     ) {
       const jobOwner = store.state.users.find((u) => u.id === jobOwnerId);
       if (req.user!.role !== 'admin' && !canUserDispatchQueuedJobs(jobOwner || req.user)) {
+        const currentPrice = store.state.platformSettings?.monthlyPriceUsd || 20;
         res.status(402).json({
           error:
-            'Please complete your $20/month payment on the Subscription page to resume or send emails.',
+            `Please complete your $${currentPrice}/month payment on the Subscription page to resume or send emails.`,
         });
         return;
       }
@@ -2206,7 +3051,10 @@ async function bootstrap() {
     }
 
     if (hourlyRateLimit) {
-      const capped = Math.min(hourlyRateLimit, req.user!.options.maxHourlyRate) as HourlyRateStep;
+      const capped =
+        req.user!.role === 'admin'
+          ? hourlyRateLimit
+          : (Math.min(hourlyRateLimit, req.user!.options.maxHourlyRate) as HourlyRateStep);
       job.hourlyRateLimit = capped;
       job.currentHourlyRate = capped;
     }
@@ -2450,9 +3298,10 @@ async function bootstrap() {
     const ownerId = keyRecord.ownerId || 'usr_geekytycoon';
     const ownerUser = store.state.users.find((u) => u.id === ownerId);
     if (!canUserCreateCampaign(ownerUser)) {
+      const currentPrice = store.state.platformSettings?.monthlyPriceUsd || 20;
       res.status(402).json({
         error:
-          'Please complete your $20/month payment on the Subscription page to continue sending emails.',
+          `Please complete your $${currentPrice}/month payment on the Subscription page to continue sending emails.`,
       });
       return;
     }

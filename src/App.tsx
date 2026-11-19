@@ -1,5 +1,6 @@
 import React, { useCallback, useEffect, useState } from 'react';
 import {
+  AlertTriangle,
   ArrowLeft,
   BarChart2,
   Clock,
@@ -8,6 +9,7 @@ import {
   Inbox,
   LogOut,
   Mail,
+  Megaphone,
   Menu,
   Send,
   Settings,
@@ -155,6 +157,7 @@ export default function App() {
 
   const isAdminRoute = checkIsAdminPath(routePath);
   const [dismissedTopUpKey, setDismissedTopUpKey] = useState<string | null>(null);
+  const [dismissedAnnouncementText, setDismissedAnnouncementText] = useState<string | null>(null);
 
   const [theme, setTheme] = useState<ThemeId>(() => {
     const savedTheme = localStorage.getItem(STORAGE_THEME_KEY);
@@ -624,6 +627,14 @@ export default function App() {
           setSnapshot((prev) => (prev ? { ...prev, adminData } : prev))
         }
         onImpersonateUser={handleImpersonateUser}
+        onFullRestoreCompleted={(nextToken, nextSnapshot) => {
+          localStorage.setItem(STORAGE_TOKEN_KEY, nextToken);
+          sessionStorage.removeItem(STORAGE_ADMIN_RETURN_KEY);
+          setAdminReturnToken(null);
+          setToken(nextToken);
+          setSnapshot(nextSnapshot);
+          applyUserPreferences(nextSnapshot.user, nextToken);
+        }}
       />
     );
   }
@@ -1070,6 +1081,47 @@ export default function App() {
                 );
               })}
             </div>
+
+            {/* Admin Global Maintenance Notice & Broadcast Announcement */}
+            {snapshot.platformSettings?.maintenanceMode && (
+              <div className="mb-4 px-4 py-3 rounded-xl border border-amber-500/40 bg-amber-500/12 text-amber-800 dark:text-amber-200 flex items-start gap-2.5 text-xs font-mono">
+                <AlertTriangle className="w-4 h-4 shrink-0 mt-0.5 text-amber-500" />
+                <div className="leading-relaxed">
+                  <span className="font-bold uppercase tracking-wider mr-2">
+                    Maintenance Notice:
+                  </span>
+                  <span>
+                    {snapshot.platformSettings.maintenanceMessage?.trim() ||
+                      '234Mail is undergoing scheduled server maintenance. Sending may be paused temporarily.'}
+                  </span>
+                </div>
+              </div>
+            )}
+
+            {snapshot.platformSettings?.announcementBanner?.trim() &&
+              dismissedAnnouncementText !==
+                snapshot.platformSettings.announcementBanner.trim() && (
+                <div className="mb-4 px-4 py-3 rounded-xl border border-cyan-500/35 bg-cyan-500/10 text-cyan-900 dark:text-cyan-200 flex items-start justify-between gap-3 text-xs font-mono">
+                  <div className="flex items-start gap-2.5 min-w-0">
+                    <Megaphone className="w-4 h-4 shrink-0 mt-0.5 text-cyan-500" />
+                    <span className="leading-relaxed break-words">
+                      {snapshot.platformSettings.announcementBanner.trim()}
+                    </span>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() =>
+                      setDismissedAnnouncementText(
+                        snapshot.platformSettings.announcementBanner?.trim() || null
+                      )
+                    }
+                    aria-label="Dismiss announcement"
+                    className="p-1 rounded-md text-cyan-700 dark:text-cyan-300 hover:bg-cyan-500/20 shrink-0 cursor-pointer"
+                  >
+                    <X className="w-3.5 h-3.5" />
+                  </button>
+                </div>
+              )}
 
             {activeTab === 'overview' && (
               <OverviewView

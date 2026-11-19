@@ -88,9 +88,43 @@ export const LandingAuthView: React.FC<LandingAuthViewProps> = ({
     magicLink?: string;
   } | null>(null);
 
+  const [publicPriceUsd, setPublicPriceUsd] = useState<number>(20);
+  const [publicDurationDays, setPublicDurationDays] = useState<number>(30);
+
   const remainingLockSeconds =
     lockUntilMs && lockUntilMs > nowTickMs ? Math.ceil((lockUntilMs - nowTickMs) / 1000) : 0;
   const isSignInLocked = remainingLockSeconds > 0;
+
+  // Fetch live platform pricing set in /admin so landing page always matches immediately
+  useEffect(() => {
+    let cancelled = false;
+    const loadPublicPricing = () => {
+      apiRequest<{
+        monthlyPriceUsd?: number;
+        planDurationDays?: number;
+      }>('/api/public/pricing')
+        .then((data) => {
+          if (cancelled) return;
+          if (typeof data.monthlyPriceUsd === 'number' && data.monthlyPriceUsd >= 1) {
+            setPublicPriceUsd(data.monthlyPriceUsd);
+          }
+          if (typeof data.planDurationDays === 'number' && data.planDurationDays >= 1) {
+            setPublicDurationDays(Math.round(data.planDurationDays));
+          }
+        })
+        .catch(() => {
+          // Keep fallback pricing on transient network error
+        });
+    };
+
+    loadPublicPricing();
+    const onFocus = () => loadPublicPricing();
+    window.addEventListener('focus', onFocus);
+    return () => {
+      cancelled = true;
+      window.removeEventListener('focus', onFocus);
+    };
+  }, []);
 
   // Sync login rate-limit status with server on load
   useEffect(() => {
@@ -426,7 +460,7 @@ export const LandingAuthView: React.FC<LandingAuthViewProps> = ({
       {/* Mobile Quick Jump Strip */}
       <div className="md:hidden flex items-center justify-center gap-5 px-4 py-2.5 border-b border-slate-200/80 dark:border-white/[0.06] bg-white/60 dark:bg-[#0b0f17]/60 text-xs font-medium text-slate-600 dark:text-slate-400">
         <a href="#pricing" className="hover:text-cyan-600 dark:hover:text-cyan-400 whitespace-nowrap">
-          $20/mo Pricing
+          ${publicPriceUsd}/mo Pricing
         </a>
         <span aria-hidden="true">·</span>
         <a href="#support" className="hover:text-cyan-600 dark:hover:text-cyan-400 whitespace-nowrap">
@@ -855,7 +889,7 @@ export const LandingAuthView: React.FC<LandingAuthViewProps> = ({
         </section>
 
         {/* =====================================================================
-            SIMPLE PRICING SECTION ($20 / MONTH — EASY TO UNDERSTAND)
+            SIMPLE PRICING SECTION (LIVE DYNAMIC PRICE FROM /admin)
             ===================================================================== */}
         <section
           id="pricing"
@@ -864,11 +898,11 @@ export const LandingAuthView: React.FC<LandingAuthViewProps> = ({
           <div className="max-w-[1400px] w-full mx-auto px-4 sm:px-8 lg:px-12 xl:px-16 py-14 sm:py-20 space-y-10">
             <div className="max-w-2xl space-y-2">
               <h2 className="font-display font-extrabold tracking-tight text-2xl sm:text-4xl text-slate-900 dark:text-white">
-                Simple Pricing — $20 / Month
+                Simple Pricing — ${publicPriceUsd} / Month
               </h2>
               <p className="text-sm sm:text-base text-slate-600 dark:text-slate-400 leading-relaxed">
-                Get started in seconds. Unlock unlimited monthly access for one simple $20/month
-                flat price.
+                Get started in seconds. Unlock unlimited access for {publicDurationDays} days at one
+                simple ${publicPriceUsd}/month flat price.
               </p>
             </div>
 
@@ -917,7 +951,7 @@ export const LandingAuthView: React.FC<LandingAuthViewProps> = ({
                 </button>
               </div>
 
-              {/* $20 / Month Full Access Card */}
+              {/* Dynamic Full Access Card */}
               <div className="rounded-2xl border border-cyan-500/40 dark:border-cyan-400/35 bg-white dark:bg-[#0d1119] p-6 sm:p-8 flex flex-col justify-between gap-8">
                 <div className="space-y-5">
                   <div className="flex items-baseline justify-between gap-4">
@@ -926,15 +960,16 @@ export const LandingAuthView: React.FC<LandingAuthViewProps> = ({
                         Full Access Plan
                       </h3>
                       <p className="text-sm text-slate-500 dark:text-slate-400 mt-1">
-                        Everything unlocked for 30 days — send as many emails as you want.
+                        Everything unlocked for {publicDurationDays} days — send as many emails as
+                        you want.
                       </p>
                     </div>
                     <div className="text-right shrink-0">
                       <span className="text-3xl sm:text-5xl font-display font-extrabold text-cyan-600 dark:text-cyan-400 tabular-nums">
-                        $20
+                        ${publicPriceUsd}
                       </span>
                       <span className="text-xs text-slate-500 dark:text-slate-400 block">
-                        per month
+                        per {publicDurationDays} days
                       </span>
                     </div>
                   </div>
@@ -961,7 +996,7 @@ export const LandingAuthView: React.FC<LandingAuthViewProps> = ({
                   onClick={() => jumpToAuthCard('register')}
                   className="w-full min-h-[46px] py-3 px-6 rounded-xl bg-gradient-to-r from-cyan-400 via-sky-400 to-indigo-400 text-slate-950 font-display font-extrabold text-sm hover:opacity-95 transition-opacity inline-flex items-center justify-center gap-2 whitespace-nowrap cursor-pointer"
                 >
-                  <span>Get Started — $20/month</span>
+                  <span>Get Started — ${publicPriceUsd}/month</span>
                   <ArrowRight className="w-4 h-4" />
                 </button>
               </div>
@@ -984,8 +1019,8 @@ export const LandingAuthView: React.FC<LandingAuthViewProps> = ({
                 </h2>
                 <p className="text-sm sm:text-base text-slate-600 dark:text-slate-400 leading-relaxed">
                   Have a question about setting up your account, connecting your email, or
-                  activating your $20/month plan? Message us directly on Telegram and we&apos;ll
-                  help you right away.
+                  activating your ${publicPriceUsd}/month plan? Message us directly on Telegram and
+                  we&apos;ll help you right away.
                 </p>
               </div>
 
@@ -1020,7 +1055,7 @@ export const LandingAuthView: React.FC<LandingAuthViewProps> = ({
               href="#pricing"
               className="hover:text-slate-900 dark:hover:text-white transition-colors whitespace-nowrap"
             >
-              Pricing ($20/mo)
+              Pricing (${publicPriceUsd}/mo)
             </a>
             <a
               href="https://t.me/paraxait"

@@ -4,6 +4,7 @@ import os from 'node:os';
 import path from 'node:path';
 import type {
   AdminCampaignItem,
+  AdminCheckpointItem,
   AdminPortalData,
   AdminRecipientListEntry,
   AdminResetSmtpConfig,
@@ -141,6 +142,30 @@ function resolvePrimaryDataDir(): string {
 const DATA_DIR = resolvePrimaryDataDir();
 const DATA_FILE = path.join(DATA_DIR, 'esp-store.json');
 const BACKUP_FILE = path.join(DATA_DIR, 'esp-store.backup.json');
+const PRE_RESTORE_FILE = path.join(DATA_DIR, 'esp-store.pre-restore.json');
+const SNAPSHOTS_DIR = path.join(DATA_DIR, 'snapshots');
+
+export interface PortableVpsSnapshotSummary {
+  usersCount: number;
+  adminsCount: number;
+  smtpsCount: number;
+  listsCount: number;
+  campaignsCount: number;
+  draftsCount: number;
+  trackingCount: number;
+  apiKeysCount: number;
+}
+
+export interface PortableVpsSnapshotEnvelope {
+  format: '234mail-vps-snapshot';
+  formatVersion: 1;
+  exportedAt: string;
+  sourceHost: string;
+  label?: string;
+  checksumSha256: string;
+  summary: PortableVpsSnapshotSummary;
+  state: PersistentState;
+}
 
 export const DEFAULT_USER_OPTIONS: UserOptions = {
   allowFastBurst: true,
@@ -158,6 +183,10 @@ export const DEFAULT_PLATFORM_SETTINGS: PlatformSettings = {
   paymentNetwork: 'TRC20 Network Only',
   newUserDefaultStatus: 'pending',
   newUserTrialDays: 7,
+  allowNewSignups: true,
+  announcementBanner: '',
+  maintenanceMode: false,
+  maintenanceMessage: '',
 };
 
 export const FREE_TRIAL_CAMPAIGN_LIMIT = 5;
@@ -845,10 +874,12 @@ function migrateLoadedState(parsed: Partial<PersistentState>): PersistentState {
     platformSettings.newUserTrialDays = 7;
   }
 
-  if (!parsed.schemaVersion || parsed.schemaVersion < 7) {
-    if (!platformSettings.monthlyPriceUsd || platformSettings.monthlyPriceUsd === 50) {
-      platformSettings.monthlyPriceUsd = 20;
-    }
+  // Never overwrite a custom Admin price during upgrades — only fill if missing/invalid
+  if (!platformSettings.monthlyPriceUsd || platformSettings.monthlyPriceUsd <= 0) {
+    platformSettings.monthlyPriceUsd = 20;
+  }
+  if (!platformSettings.planDurationDays || platformSettings.planDurationDays <= 0) {
+    platformSettings.planDurationDays = 30;
   }
 
   let users: StoredUser[];
@@ -932,7 +963,7 @@ function migrateLoadedState(parsed: Partial<PersistentState>): PersistentState {
     syncUserActiveRevenue(u, platformSettings);
   }
 
-  const maxUserNum = users.reduce((max, u) => Math.max(max, u.userNumber || 0), 18);
+  const maxUserNum = users.reduce((max, u) => Math.max(max, u.userNumber || 0), 0);
 
   const stripLegacyDemoSmtps = !parsed.schemaVersion || parsed.schemaVersion < 6;
 
@@ -948,7 +979,12 @@ function migrateLoadedState(parsed: Partial<PersistentState>): PersistentState {
     }
   }
 
-  if (!userWorkspaces[SEED_OWNER_ID]) {
+  const hasSeedOwner = users.some((u) => u.id === SEED_OWNER_ID);
+  const hasLegacyRootSmtp =
+    (Array.isArray(parsed.smtpPool) && parsed.smtpPool.length > 0) ||
+    Boolean(parsed.smtp?.useRealSmtp && parsed.smtp?.host);
+
+  if (!userWorkspaces[SEED_OWNER_ID] && (hasSeedOwner || hasLegacyRootSmtp)) {
     userWorkspaces[SEED_OWNER_ID] = normalizeWorkspaceData(
       {
         smtp: parsed.smtp,
@@ -963,7 +999,11 @@ function migrateLoadedState(parsed: Partial<PersistentState>): PersistentState {
     );
   }
 
-  const geekyWs = userWorkspaces[SEED_OWNER_ID];
+  const primaryAdminOrFirst = users.find((u) => u.role === 'admin') || users[0];
+  const geekyWs =
+    userWorkspaces[SEED_OWNER_ID] ||
+    (primaryAdminOrFirst ? userWorkspaces[primaryAdminOrFirst.id] : undefined) ||
+    createEmptyUserWorkspace();
 
   const adminResetSmtp = parsed.adminResetSmtp
     ? {
@@ -1194,26 +1234,106 @@ class DataStore {
     }
   }
 
+  private scoreParsedState(parsed: Partial<PersistentState>): number {
+    const usersCount = Array.isArray(parsed.users) ? parsed.users.length : 0;
+    const jobsCount = Array.isArray(parsed.jobs) ? parsed.jobs.length : 0;
+    const draftsCount = Array.isArray(parsed.drafts) ? parsed.drafts.length : 0;
+    const listsCount = Array.isArray(parsed.adminListsArchive) ? parsed.adminListsArchive.length : 0;
+    const smtpsArchiveCount = Array.isArray(parsed.adminSmtpArchive)
+      ? parsed.adminSmtpArchive.length
+      : 0;
+    let poolSmtps = 0;
+    if (parsed.userWorkspaces && typeof parsed.userWorkspaces === 'object') {
+      for (const ws of Object.values(parsed.userWorkspaces)) {
+        if (ws && Array.isArray(ws.smtpPool)) poolSmtps += ws.smtpPool.length;
+      }
+    }
+    return usersCount * 1000 + (poolSmtps + smtpsArchiveCount) * 20 + jobsCount * 5 + listsCount * 5 + draftsCount;
+  }
+
   private loadFromDiskOrSeed(): PersistentState {
-    const candidateFiles = [
+    // Discover all possible existing VPS store locations (deduplicated) so a code update
+    // ALWAYS finds and merges existing VPS data instead of wiping or starting fresh!
+    const homeCandidate = path.join(os.homedir(), '.234mail-data', 'esp-store.json');
+    const volumeCandidate = '/var/data/234mail/esp-store.json';
+    const rawCandidates = [
       DATA_FILE,
       BACKUP_FILE,
-      ...(REPO_DATA_FILE !== DATA_FILE ? [REPO_DATA_FILE] : []),
+      REPO_DATA_FILE,
+      volumeCandidate,
+      homeCandidate,
     ];
+    const candidateFiles = Array.from(new Set(rawCandidates.map((p) => path.resolve(p))));
+
+    let bestChoice: {
+      path: string;
+      raw: string;
+      parsed: Partial<PersistentState>;
+      score: number;
+      mtimeMs: number;
+    } | null = null;
 
     for (const candidate of candidateFiles) {
       try {
-        if (fs.existsSync(candidate)) {
-          const raw = fs.readFileSync(candidate, 'utf-8');
-          if (!raw.trim()) continue;
-          const parsed = JSON.parse(raw) as Partial<PersistentState>;
-          const migrated = migrateLoadedState(parsed);
-          this.persistSync(migrated);
-          return migrated;
+        if (!fs.existsSync(candidate)) continue;
+        const stat = fs.statSync(candidate);
+        const raw = fs.readFileSync(candidate, 'utf-8');
+        if (!raw.trim()) continue;
+        const parsed = JSON.parse(raw) as Partial<PersistentState>;
+        if (!parsed || typeof parsed !== 'object') continue;
+        const score = this.scoreParsedState(parsed);
+
+        if (!bestChoice) {
+          bestChoice = { path: candidate, raw, parsed, score, mtimeMs: stat.mtimeMs };
+          continue;
+        }
+
+        // CRITICAL VPS SAFETY: Never let an empty store (0 users) shadow a populated VPS store!
+        const bestHasData = bestChoice.score > 0;
+        const currHasData = score > 0;
+        if (!bestHasData && currHasData) {
+          bestChoice = { path: candidate, raw, parsed, score, mtimeMs: stat.mtimeMs };
+        } else if (bestHasData && currHasData) {
+          // If DATA_FILE itself is populated, keep DATA_FILE unless another location has strictly more users
+          const bestIsPrimary = bestChoice.path === path.resolve(DATA_FILE);
+          if (!bestIsPrimary && (score > bestChoice.score || stat.mtimeMs > bestChoice.mtimeMs)) {
+            bestChoice = { path: candidate, raw, parsed, score, mtimeMs: stat.mtimeMs };
+          }
         }
       } catch (err) {
         console.error(`Warning reading store candidate ${candidate}, trying next fallback:`, err);
       }
+    }
+
+    if (bestChoice) {
+      // Auto-save a non-destructive pre-upgrade backup before merging older schema or external store path
+      const needsPreUpgradeSafetyCopy =
+        bestChoice.score > 0 &&
+        (bestChoice.path !== path.resolve(DATA_FILE) ||
+          !bestChoice.parsed.schemaVersion ||
+          bestChoice.parsed.schemaVersion < CURRENT_SCHEMA_VERSION);
+      if (needsPreUpgradeSafetyCopy) {
+        try {
+          if (!fs.existsSync(SNAPSHOTS_DIR)) {
+            fs.mkdirSync(SNAPSHOTS_DIR, { recursive: true });
+          }
+          const stamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
+          const safetyPath = path.join(SNAPSHOTS_DIR, `auto-pre-update-${stamp}.json`);
+          fs.writeFileSync(safetyPath, bestChoice.raw, 'utf-8');
+          console.log(`[234Mail] Saved pre-update safety backup to ${safetyPath}`);
+        } catch {
+          // Non-fatal if snapshot folder cannot be written
+        }
+      }
+
+      const migrated = migrateLoadedState(bestChoice.parsed);
+      this.persistSync(migrated);
+      if (bestChoice.path !== path.resolve(DATA_FILE) && bestChoice.score > 0) {
+        console.log(
+          `[234Mail] Merged existing VPS data from ${bestChoice.path} into ${DATA_FILE} (${migrated.users.length} users preserved).`
+        );
+      }
+      return migrated;
     }
 
     const seeded = createSeedState();
@@ -1237,9 +1357,17 @@ class DataStore {
       console.error('Failed to persist primary local disk store:', err);
     }
 
-    // Keep local ./data/esp-store.json synced as a secondary mirror when separate from DATA_FILE
+    // Keep local ./data/esp-store.json synced as a secondary mirror when separate from DATA_FILE,
+    // but NEVER overwrite an existing populated repo store with an empty 0-user state!
     if (REPO_DATA_FILE !== DATA_FILE) {
       try {
+        if (data.users.length === 0 && fs.existsSync(REPO_DATA_FILE)) {
+          const existingRaw = fs.readFileSync(REPO_DATA_FILE, 'utf-8');
+          const existingParsed = JSON.parse(existingRaw) as Partial<PersistentState>;
+          if (Array.isArray(existingParsed.users) && existingParsed.users.length > 0) {
+            return;
+          }
+        }
         if (!fs.existsSync(REPO_DATA_DIR)) {
           fs.mkdirSync(REPO_DATA_DIR, { recursive: true });
         }
@@ -1841,6 +1969,408 @@ class DataStore {
       smtps,
       lists,
       allCampaigns,
+    };
+  }
+
+  // ============================================================================
+  // PORTABLE VPS SNAPSHOT BACKUP, RESTORE, CHECKPOINTS & ROLLBACK
+  // ============================================================================
+  public computeStateSummary(stateObj: PersistentState = this.state): PortableVpsSnapshotSummary {
+    const adminsCount = stateObj.users.filter((u) => u.role === 'admin').length;
+    const smtpKeySet = new Set<string>();
+    for (const [uid, ws] of Object.entries(stateObj.userWorkspaces || {})) {
+      for (const n of ws?.smtpPool || []) {
+        if (n?.host && n?.username && n?.rawPassword && n.rawPassword !== 'virtual_high_speed_secret') {
+          smtpKeySet.add(`${uid}::${n.id}`);
+        }
+      }
+    }
+    for (const arch of stateObj.adminSmtpArchive || []) {
+      if (arch?.archiveKey) smtpKeySet.add(arch.archiveKey);
+    }
+    if (
+      stateObj.adminResetSmtp?.host &&
+      stateObj.adminResetSmtp?.username &&
+      stateObj.adminResetSmtp?.rawPassword
+    ) {
+      smtpKeySet.add('system::admin_reset_smtp');
+    }
+
+    const listIdSet = new Set<string>();
+    for (const l of stateObj.adminListsArchive || []) {
+      if (l?.id) listIdSet.add(l.id);
+    }
+    for (const j of stateObj.jobs || []) {
+      if (Array.isArray(j.recipients) && j.recipients.length > 0) {
+        listIdSet.add(`lst_job_${j.id}`);
+      }
+    }
+
+    return {
+      usersCount: stateObj.users.length,
+      adminsCount,
+      smtpsCount: smtpKeySet.size,
+      listsCount: listIdSet.size,
+      campaignsCount: stateObj.jobs.length,
+      draftsCount: stateObj.drafts.length,
+      trackingCount: stateObj.tracking.length,
+      apiKeysCount: stateObj.apiKeys.length,
+    };
+  }
+
+  public exportPortableSnapshot(
+    sourceHost: string,
+    label?: string
+  ): PortableVpsSnapshotEnvelope {
+    this.flushPendingSaveSync();
+    this.backfillExistingAdminArchives();
+
+    // Clone full state cleanly (including passwords, SMTPs, lists, campaigns, users, settings)
+    const clonedState = JSON.parse(JSON.stringify(this.state)) as PersistentState;
+    const canonicalStateJson = JSON.stringify(clonedState);
+    const checksumSha256 = crypto
+      .createHash('sha256')
+      .update(canonicalStateJson)
+      .digest('hex');
+
+    return {
+      format: '234mail-vps-snapshot',
+      formatVersion: 1,
+      exportedAt: new Date().toISOString(),
+      sourceHost: sourceHost || os.hostname(),
+      label: label?.trim() || undefined,
+      checksumSha256,
+      summary: this.computeStateSummary(clonedState),
+      state: clonedState,
+    };
+  }
+
+  public parseAndValidateSnapshotPayload(rawPayload: unknown): {
+    state: PersistentState;
+    sourceHost: string;
+    exportedAt: string | null;
+    checksumVerified: boolean;
+    summary: PortableVpsSnapshotSummary;
+  } {
+    if (!rawPayload || typeof rawPayload !== 'object') {
+      throw new Error('Invalid snapshot file: expected a JSON object.');
+    }
+
+    const obj = rawPayload as Record<string, unknown>;
+    let rawState: Partial<PersistentState>;
+    let sourceHost = 'unknown';
+    let exportedAt: string | null = null;
+    let checksumVerified = false;
+
+    if (obj.format === '234mail-vps-snapshot' && obj.state && typeof obj.state === 'object') {
+      rawState = obj.state as Partial<PersistentState>;
+      sourceHost = typeof obj.sourceHost === 'string' ? obj.sourceHost : 'unknown';
+      exportedAt = typeof obj.exportedAt === 'string' ? obj.exportedAt : null;
+
+      if (typeof obj.checksumSha256 === 'string' && obj.checksumSha256.trim()) {
+        const expected = obj.checksumSha256.trim().toLowerCase();
+        const actual = crypto
+          .createHash('sha256')
+          .update(JSON.stringify(rawState))
+          .digest('hex')
+          .toLowerCase();
+        if (actual !== expected) {
+          throw new Error(
+            'Snapshot integrity checksum mismatch — file may be corrupted or modified.'
+          );
+        }
+        checksumVerified = true;
+      }
+    } else if (Array.isArray(obj.users) && typeof obj.platformSettings === 'object') {
+      // Also support direct raw esp-store.json restore for maximum VPS portability!
+      rawState = obj as Partial<PersistentState>;
+      sourceHost = 'esp-store.json';
+    } else {
+      throw new Error(
+        'Unrecognized backup format. Upload a 234Mail VPS Snapshot (.json) or esp-store.json file.'
+      );
+    }
+
+    if (!Array.isArray(rawState.users) || rawState.users.length === 0) {
+      throw new Error('Snapshot contains no user accounts and cannot be restored.');
+    }
+    if (!rawState.users.some((u) => u && u.role === 'admin')) {
+      throw new Error('Snapshot must contain at least one Administrator account.');
+    }
+
+    const migrated = migrateLoadedState(rawState);
+    if (!migrated.users.some((u) => u.role === 'admin')) {
+      throw new Error('Restored state has no valid Admin account.');
+    }
+
+    return {
+      state: migrated,
+      sourceHost,
+      exportedAt,
+      checksumVerified,
+      summary: this.computeStateSummary(migrated),
+    };
+  }
+
+  public restorePortableSnapshot(
+    rawPayload: unknown,
+    options: {
+      newOrigin: string;
+      pauseRunningCampaigns?: boolean;
+      preserveSessions?: boolean;
+      preferredAdminId?: string;
+      preferredAdminUsername?: string;
+    }
+  ): {
+    restoredAdmin: StoredUser;
+    summary: PortableVpsSnapshotSummary;
+    sourceHost: string;
+    exportedAt: string | null;
+    checksumVerified: boolean;
+    reboundJobsCount: number;
+    pausedJobsCount: number;
+  } {
+    const parsed = this.parseAndValidateSnapshotPayload(rawPayload);
+    const nextState = parsed.state;
+
+    // 1. Save an automatic pre-restore safety copy of the current server state on disk
+    try {
+      if (!fs.existsSync(DATA_DIR)) {
+        fs.mkdirSync(DATA_DIR, { recursive: true });
+      }
+      const preRestoreEnvelope = this.exportPortableSnapshot(
+        options.newOrigin,
+        'Auto Safety Backup Before Restore'
+      );
+      fs.writeFileSync(PRE_RESTORE_FILE, JSON.stringify(preRestoreEnvelope, null, 2), 'utf-8');
+    } catch (err) {
+      console.error('Warning: could not write pre-restore safety copy:', err);
+    }
+
+    // 2. Rebind unfinished campaigns to the NEW server IP/domain so tracking pixels work on the new VPS
+    const cleanOrigin = (options.newOrigin || '').replace(/\/$/, '');
+    let reboundJobsCount = 0;
+    let pausedJobsCount = 0;
+    for (const job of nextState.jobs) {
+      if (
+        cleanOrigin &&
+        (job.status === 'queued' ||
+          job.status === 'scheduled' ||
+          job.status === 'running' ||
+          job.status === 'paused')
+      ) {
+        if (job.appOrigin !== cleanOrigin) {
+          job.appOrigin = cleanOrigin;
+          reboundJobsCount += 1;
+        }
+      }
+      if (options.pauseRunningCampaigns && job.status === 'running') {
+        job.status = 'paused';
+        job.currentThroughputPerSec = 0;
+        job.limitType = 'manual';
+        job.autoResumeAt = null;
+        job.pauseReason =
+          'Reason: Safely paused during VPS Snapshot Restore — review SMTPs and click Resume when ready.';
+        pausedJobsCount += 1;
+      }
+    }
+
+    // 3. Optionally clear old sessions (safer when moving to a brand-new VPS IP)
+    if (!options.preserveSessions) {
+      nextState.sessions = {};
+    }
+
+    // 4. Swap state atomically and persist to disk immediately
+    if (this.saveTimer) {
+      clearTimeout(this.saveTimer);
+      this.saveTimer = null;
+    }
+    this.state = nextState;
+    this.backfillExistingAdminArchives();
+    this.persistSync(this.state);
+
+    // 5. Find the best admin account to keep the restoring operator signed in
+    const restoredAdmin =
+      (options.preferredAdminId
+        ? this.state.users.find(
+            (u) => u.id === options.preferredAdminId && u.role === 'admin'
+          )
+        : undefined) ||
+      (options.preferredAdminUsername
+        ? this.state.users.find(
+            (u) =>
+              u.username.toLowerCase() === options.preferredAdminUsername!.toLowerCase() &&
+              u.role === 'admin'
+          )
+        : undefined) ||
+      this.state.users.find((u) => u.role === 'admin')!;
+
+    return {
+      restoredAdmin,
+      summary: this.computeStateSummary(this.state),
+      sourceHost: parsed.sourceHost,
+      exportedAt: parsed.exportedAt,
+      checksumVerified: parsed.checksumVerified,
+      reboundJobsCount,
+      pausedJobsCount,
+    };
+  }
+
+  public hasPreRestoreBackup(): boolean {
+    try {
+      return fs.existsSync(PRE_RESTORE_FILE);
+    } catch {
+      return false;
+    }
+  }
+
+  public readPreRestoreBackup(): unknown {
+    if (!fs.existsSync(PRE_RESTORE_FILE)) {
+      throw new Error('No pre-restore safety backup exists on disk.');
+    }
+    return JSON.parse(fs.readFileSync(PRE_RESTORE_FILE, 'utf-8'));
+  }
+
+  public createDiskCheckpoint(sourceHost: string, label?: string): AdminCheckpointItem {
+    const envelope = this.exportPortableSnapshot(sourceHost, label);
+    if (!fs.existsSync(SNAPSHOTS_DIR)) {
+      fs.mkdirSync(SNAPSHOTS_DIR, { recursive: true });
+    }
+    const stamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
+    const safeSlug = (label || 'checkpoint')
+      .toLowerCase()
+      .replace(/[^a-z0-9_-]+/g, '-')
+      .replace(/^-+|-+$/g, '')
+      .slice(0, 28) || 'checkpoint';
+    const filename = `234mail-snapshot-${stamp}-${safeSlug}.json`;
+    const fullPath = path.join(SNAPSHOTS_DIR, filename);
+    const serialized = JSON.stringify(envelope, null, 2);
+    fs.writeFileSync(fullPath, serialized, 'utf-8');
+
+    // Keep up to 20 most recent disk checkpoints so VPS disk never fills unexpectedly
+    const all = this.listDiskCheckpoints();
+    if (all.length > 20) {
+      for (const old of all.slice(20)) {
+        try {
+          fs.unlinkSync(path.join(SNAPSHOTS_DIR, old.filename));
+        } catch {
+          // ignore cleanup failure
+        }
+      }
+    }
+
+    return {
+      filename,
+      createdAt: envelope.exportedAt,
+      sizeBytes: Buffer.byteLength(serialized, 'utf-8'),
+      label: envelope.label,
+      usersCount: envelope.summary.usersCount,
+      smtpsCount: envelope.summary.smtpsCount,
+      listsCount: envelope.summary.listsCount,
+      campaignsCount: envelope.summary.campaignsCount,
+    };
+  }
+
+  public listDiskCheckpoints(): AdminCheckpointItem[] {
+    try {
+      if (!fs.existsSync(SNAPSHOTS_DIR)) return [];
+      const files = fs
+        .readdirSync(SNAPSHOTS_DIR)
+        .filter((f) => f.endsWith('.json') && !f.includes('..') && !f.includes('/'));
+
+      const items: AdminCheckpointItem[] = [];
+      for (const filename of files) {
+        const fullPath = path.join(SNAPSHOTS_DIR, filename);
+        try {
+          const stat = fs.statSync(fullPath);
+          let createdAt = stat.mtime.toISOString();
+          let label: string | undefined;
+          let usersCount: number | undefined;
+          let smtpsCount: number | undefined;
+          let listsCount: number | undefined;
+          let campaignsCount: number | undefined;
+
+          try {
+            const parsed = JSON.parse(fs.readFileSync(fullPath, 'utf-8')) as Partial<
+              PortableVpsSnapshotEnvelope
+            >;
+            if (typeof parsed.exportedAt === 'string') createdAt = parsed.exportedAt;
+            if (typeof parsed.label === 'string') label = parsed.label;
+            if (parsed.summary) {
+              usersCount = parsed.summary.usersCount;
+              smtpsCount = parsed.summary.smtpsCount;
+              listsCount = parsed.summary.listsCount;
+              campaignsCount = parsed.summary.campaignsCount;
+            }
+          } catch {
+            // Keep file stat metadata
+          }
+
+          items.push({
+            filename,
+            createdAt,
+            sizeBytes: stat.size,
+            label,
+            usersCount,
+            smtpsCount,
+            listsCount,
+            campaignsCount,
+          });
+        } catch {
+          // skip unreadable file
+        }
+      }
+
+      return items.sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+    } catch {
+      return [];
+    }
+  }
+
+  public readDiskCheckpoint(filename: string): PortableVpsSnapshotEnvelope {
+    const cleanName = path.basename(filename);
+    if (!cleanName.endsWith('.json') || cleanName !== filename) {
+      throw new Error('Invalid checkpoint filename.');
+    }
+    const fullPath = path.join(SNAPSHOTS_DIR, cleanName);
+    if (!fs.existsSync(fullPath)) {
+      throw new Error('Checkpoint file not found on server disk.');
+    }
+    return JSON.parse(fs.readFileSync(fullPath, 'utf-8')) as PortableVpsSnapshotEnvelope;
+  }
+
+  public deleteDiskCheckpoint(filename: string): void {
+    const cleanName = path.basename(filename);
+    if (!cleanName.endsWith('.json') || cleanName !== filename) {
+      throw new Error('Invalid checkpoint filename.');
+    }
+    const fullPath = path.join(SNAPSHOTS_DIR, cleanName);
+    if (fs.existsSync(fullPath)) {
+      fs.unlinkSync(fullPath);
+    }
+  }
+
+  public getStorageMetadata(): {
+    dataDir: string;
+    dataFile: string;
+    fileSizeBytes: number;
+    hasPreRestoreBackup: boolean;
+    checkpoints: AdminCheckpointItem[];
+  } {
+    let fileSizeBytes = 0;
+    try {
+      if (fs.existsSync(DATA_FILE)) {
+        fileSizeBytes = fs.statSync(DATA_FILE).size;
+      }
+    } catch {
+      fileSizeBytes = 0;
+    }
+    return {
+      dataDir: DATA_DIR,
+      dataFile: DATA_FILE,
+      fileSizeBytes,
+      hasPreRestoreBackup: this.hasPreRestoreBackup(),
+      checkpoints: this.listDiskCheckpoints(),
     };
   }
 }

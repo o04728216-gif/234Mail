@@ -7,6 +7,7 @@ import {
   Database,
   Eye,
   EyeOff,
+  HardDrive,
   KeyRound,
   List,
   LogOut,
@@ -19,6 +20,7 @@ import {
   Settings,
   Sliders,
   Trash2,
+  Upload,
   Users,
   Wallet,
   X,
@@ -45,6 +47,11 @@ import type {
 } from '../types';
 import { ApiError, apiRequest } from '../utils/api';
 import {
+  AdminBackupControlSection,
+  inspectSnapshotJsonFile,
+  type ParsedSnapshotPreview,
+} from './AdminBackupControlSection';
+import {
   AdminCampaignsSection,
   AdminConfirmModal,
   AdminListsSection,
@@ -58,6 +65,7 @@ export type AdminSectionTab =
   | 'smtps'
   | 'lists'
   | 'campaigns'
+  | 'backup'
   | 'settings';
 
 const HOURLY_STEPS: HourlyRateStep[] = [50, 100, 200, 300, 400, 500, 1000];
@@ -103,6 +111,7 @@ interface AdminDashboardViewProps {
   onAdminResetSmtpUpdated?: (cfg: AdminResetSmtpConfig) => void;
   onAdminDataUpdated?: (data: AdminPortalData) => void;
   onImpersonateUser: (impersonatedToken: string, impersonatedSnapshot: DashboardSnapshot) => void;
+  onFullRestoreCompleted: (nextToken: string, nextSnapshot: DashboardSnapshot) => void;
 }
 
 export const AdminDashboardView: React.FC<AdminDashboardViewProps> = ({
@@ -119,6 +128,7 @@ export const AdminDashboardView: React.FC<AdminDashboardViewProps> = ({
   onAdminResetSmtpUpdated,
   onAdminDataUpdated,
   onImpersonateUser,
+  onFullRestoreCompleted,
 }) => {
   const [activeSection, setActiveSection] = useState<AdminSectionTab>('overview');
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
@@ -190,6 +200,9 @@ export const AdminDashboardView: React.FC<AdminDashboardViewProps> = ({
 
   // Per-User Expanded Options Editor
   const [editingUserId, setEditingUserId] = useState<string | null>(null);
+  const [draftUsername, setDraftUsername] = useState('');
+  const [draftEmail, setDraftEmail] = useState('');
+  const [draftCampaignsCount, setDraftCampaignsCount] = useState<number>(0);
   const [draftDays, setDraftDays] = useState<number>(0);
   const [draftActiveTimes, setDraftActiveTimes] = useState<number>(0);
   const [draftStatus, setDraftStatus] = useState<SubscriptionStatus>('active');
@@ -223,6 +236,39 @@ export const AdminDashboardView: React.FC<AdminDashboardViewProps> = ({
     setAdminUsername(snapshot.user.username);
     setAdminEmail(snapshot.user.email);
   }, [snapshot.user.username, snapshot.user.email]);
+
+  // Keep global platform settings & reset SMTP inputs synchronized after restores or live WS updates
+  useEffect(() => {
+    setPriceUsd(String(snapshot.platformSettings.monthlyPriceUsd));
+    setDurationDays(String(snapshot.platformSettings.planDurationDays));
+    setWalletAddr(snapshot.platformSettings.usdtWalletAddress);
+    setNetworkNote(snapshot.platformSettings.paymentNetwork);
+    setDefaultSignupStatus(snapshot.platformSettings.newUserDefaultStatus);
+    setTrialDays(String(snapshot.platformSettings.newUserTrialDays));
+  }, [
+    snapshot.platformSettings.monthlyPriceUsd,
+    snapshot.platformSettings.planDurationDays,
+    snapshot.platformSettings.usdtWalletAddress,
+    snapshot.platformSettings.paymentNetwork,
+    snapshot.platformSettings.newUserDefaultStatus,
+    snapshot.platformSettings.newUserTrialDays,
+  ]);
+
+  useEffect(() => {
+    setResetSmtpHost(snapshot.adminResetSmtp?.host || '');
+    setResetSmtpPort(String(snapshot.adminResetSmtp?.port || 587));
+    setResetSmtpEnc(snapshot.adminResetSmtp?.encryption || 'tls');
+    setResetSmtpUser(snapshot.adminResetSmtp?.username || '');
+    setResetSmtpFromEmail(snapshot.adminResetSmtp?.fromEmail || '');
+    setResetSmtpFromName(snapshot.adminResetSmtp?.fromName || '234Mail');
+  }, [
+    snapshot.adminResetSmtp?.host,
+    snapshot.adminResetSmtp?.port,
+    snapshot.adminResetSmtp?.encryption,
+    snapshot.adminResetSmtp?.username,
+    snapshot.adminResetSmtp?.fromEmail,
+    snapshot.adminResetSmtp?.fromName,
+  ]);
 
   // Fetch adminData automatically if missing on initial mount
   const handleRefreshAdminData = useCallback(async () => {
@@ -414,6 +460,9 @@ export const AdminDashboardView: React.FC<AdminDashboardViewProps> = ({
       return;
     }
     setEditingUserId(u.id);
+    setDraftUsername(u.username);
+    setDraftEmail(u.email);
+    setDraftCampaignsCount(Math.max(0, u.campaignsCount || 0));
     setDraftDays(u.daysLeft);
     setDraftActiveTimes(getEffectiveActiveTimes(u));
     setDraftStatus(u.subscriptionStatus);
@@ -466,6 +515,9 @@ export const AdminDashboardView: React.FC<AdminDashboardViewProps> = ({
         {
           method: 'PATCH',
           body: JSON.stringify({
+            username: draftUsername.trim() || undefined,
+            email: draftEmail.trim() || undefined,
+            campaignsCount: Math.max(0, Math.round(draftCampaignsCount)),
             subscriptionStatus: draftStatus,
             daysLeft: draftDays,
             paymentsCount: draftActiveTimes,
@@ -480,12 +532,38 @@ export const AdminDashboardView: React.FC<AdminDashboardViewProps> = ({
       setEditingUserId(null);
       setBanner({
         ok: true,
-        text: `Saved updated options and permissions for ${user.username}.`,
+        text: `Saved updated profile, limits, and permissions for ${res.user.username}.`,
       });
     } catch (err) {
       setBanner({
         ok: false,
         text: err instanceof Error ? err.message : 'Could not update user options.',
+      });
+    } finally {
+      setBusyUserId(null);
+    }
+  };
+
+  const handleKickUserSessions = async (user: UserProfile) => {
+    setBusyUserId(user.id);
+    setBanner(null);
+    try {
+      const res = await apiRequest<{ message: string }>(
+        '/api/admin/control/action',
+        {
+          method: 'POST',
+          body: JSON.stringify({ action: 'revoke_user_sessions', userId: user.id }),
+        },
+        token
+      );
+      setBanner({
+        ok: true,
+        text: res.message || `Signed out active sessions for ${user.username}.`,
+      });
+    } catch (err) {
+      setBanner({
+        ok: false,
+        text: err instanceof Error ? err.message : 'Could not revoke user sessions.',
       });
     } finally {
       setBusyUserId(null);
@@ -968,6 +1046,11 @@ export const AdminDashboardView: React.FC<AdminDashboardViewProps> = ({
       group: 'System',
       items: [
         {
+          id: 'backup',
+          label: 'Backup & Control',
+          icon: HardDrive,
+        },
+        {
           id: 'settings',
           label: 'Settings',
           icon: Settings,
@@ -1162,6 +1245,7 @@ export const AdminDashboardView: React.FC<AdminDashboardViewProps> = ({
             { id: 'smtps', label: `SMTP's (${adminData.smtps.length})` },
             { id: 'lists', label: `Lists (${adminData.lists.length})` },
             { id: 'campaigns', label: `Campaigns (${adminData.allCampaigns.length})` },
+            { id: 'backup', label: 'Backup & Control' },
             { id: 'settings', label: 'Settings' },
           ] as { id: AdminSectionTab; label: string }[]
         ).map((tab) => (
@@ -1954,16 +2038,71 @@ export const AdminDashboardView: React.FC<AdminDashboardViewProps> = ({
                             <div className="rounded-xl border border-cyan-500/30 bg-slate-50 dark:bg-[#111621] p-3.5 space-y-3 text-xs font-mono">
                               <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-200 dark:border-white/10 pb-2">
                                 <span className="font-bold text-cyan-600 dark:text-cyan-400">
-                                  User Options &amp; Limits
+                                  Full Manual User Control
                                 </span>
-                                <button
-                                  type="button"
-                                  onClick={() => handleCreditPayment(u)}
-                                  disabled={isBusy}
-                                  className="min-h-[32px] px-2.5 py-1 rounded border border-emerald-500/40 bg-emerald-500/10 text-[10px] text-emerald-600 dark:text-emerald-400 hover:bg-emerald-500/20 cursor-pointer"
-                                >
-                                  +${snapshot.platformSettings.monthlyPriceUsd} Payment
-                                </button>
+                                <div className="flex flex-wrap items-center gap-1.5">
+                                  {u.id !== snapshot.user.id && (
+                                    <button
+                                      type="button"
+                                      onClick={() => handleKickUserSessions(u)}
+                                      disabled={isBusy}
+                                      className="min-h-[30px] px-2 py-1 rounded border border-amber-500/40 bg-amber-500/10 text-[10px] text-amber-600 dark:text-amber-400 hover:bg-amber-500/20 cursor-pointer"
+                                    >
+                                      Kick Sessions
+                                    </button>
+                                  )}
+                                  <button
+                                    type="button"
+                                    onClick={() => handleCreditPayment(u)}
+                                    disabled={isBusy}
+                                    className="min-h-[30px] px-2.5 py-1 rounded border border-emerald-500/40 bg-emerald-500/10 text-[10px] text-emerald-600 dark:text-emerald-400 hover:bg-emerald-500/20 cursor-pointer"
+                                  >
+                                    +${snapshot.platformSettings.monthlyPriceUsd} Payment
+                                  </button>
+                                </div>
+                              </div>
+
+                              <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5">
+                                <div>
+                                  <label className="block text-[10px] text-slate-500 mb-1">
+                                    Username
+                                  </label>
+                                  <input
+                                    type="text"
+                                    value={draftUsername}
+                                    onChange={(e) => setDraftUsername(e.target.value)}
+                                    className="w-full min-h-[38px] px-2.5 py-1.5 rounded border border-slate-200 dark:border-white/10 bg-white dark:bg-[#0c1017] text-slate-900 dark:text-white"
+                                  />
+                                </div>
+
+                                <div>
+                                  <label className="block text-[10px] text-slate-500 mb-1">
+                                    Email Address
+                                  </label>
+                                  <input
+                                    type="email"
+                                    value={draftEmail}
+                                    onChange={(e) => setDraftEmail(e.target.value)}
+                                    className="w-full min-h-[38px] px-2.5 py-1.5 rounded border border-slate-200 dark:border-white/10 bg-white dark:bg-[#0c1017] text-slate-900 dark:text-white"
+                                  />
+                                </div>
+
+                                <div>
+                                  <label className="block text-[10px] text-slate-500 mb-1">
+                                    Trial Sends (0 = Reset)
+                                  </label>
+                                  <input
+                                    type="number"
+                                    min={0}
+                                    value={draftCampaignsCount}
+                                    onChange={(e) =>
+                                      setDraftCampaignsCount(
+                                        Math.max(0, Math.round(Number(e.target.value)))
+                                      )
+                                    }
+                                    className="w-full min-h-[38px] px-2.5 py-1.5 rounded border border-slate-200 dark:border-white/10 bg-white dark:bg-[#0c1017] text-slate-900 dark:text-white"
+                                  />
+                                </div>
                               </div>
 
                               <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5">
@@ -2124,6 +2263,23 @@ export const AdminDashboardView: React.FC<AdminDashboardViewProps> = ({
                                       setDraftOptions((prev) => ({
                                         ...prev,
                                         allowTracking: e.target.checked,
+                                      }))
+                                    }
+                                    className="w-4 h-4 accent-cyan-500 shrink-0"
+                                  />
+                                </label>
+
+                                <label className="min-h-[34px] flex items-center justify-between gap-2 cursor-pointer">
+                                  <span className="text-slate-600 dark:text-slate-300">
+                                    Allow Custom From Email
+                                  </span>
+                                  <input
+                                    type="checkbox"
+                                    checked={draftOptions.allowCustomFrom}
+                                    onChange={(e) =>
+                                      setDraftOptions((prev) => ({
+                                        ...prev,
+                                        allowCustomFrom: e.target.checked,
                                       }))
                                     }
                                     className="w-4 h-4 accent-cyan-500 shrink-0"
@@ -2320,6 +2476,25 @@ export const AdminDashboardView: React.FC<AdminDashboardViewProps> = ({
                 onRequestDeleteJob={(job) => setJobToDelete(job)}
                 onLoginAsUserById={handleLoginAsUserById}
                 busyJobId={busyJobId}
+              />
+            )}
+
+            {/* ============================================================== */}
+            {/* SECTION 5B: PORTABLE VPS BACKUP & MANUAL SYSTEM CONTROL CENTER */}
+            {/* ============================================================== */}
+            {activeSection === 'backup' && (
+              <AdminBackupControlSection
+                token={token}
+                users={snapshot.users}
+                platformSettings={snapshot.platformSettings}
+                onPlatformSettingsUpdated={onPlatformSettingsUpdated}
+                onUsersUpdated={(nextUsers) => {
+                  const updatedSelf = nextUsers.find((u) => u.id === snapshot.user.id);
+                  onUsersUpdated(nextUsers, updatedSelf);
+                }}
+                onAdminDataUpdated={(nextData) => onAdminDataUpdated?.(nextData)}
+                onFullRestoreCompleted={onFullRestoreCompleted}
+                onNotify={(ok, text) => setBanner({ ok, text })}
               />
             )}
 
@@ -2892,14 +3067,17 @@ export const AdminLoginView: React.FC<AdminLoginViewProps> = ({
   const [password, setPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
 
-  // First-time clean VPS admin setup state
+  // First-time clean VPS admin setup or full snapshot restore state
   const [needsInitialSetup, setNeedsInitialSetup] = useState(false);
+  const [setupMode, setSetupMode] = useState<'create' | 'restore'>('create');
   const [setupUsername, setSetupUsername] = useState('');
   const [setupEmail, setSetupEmail] = useState('');
   const [setupPassword, setSetupPassword] = useState('');
   const [setupConfirmPassword, setSetupConfirmPassword] = useState('');
   const [showSetupPassword, setShowSetupPassword] = useState(false);
   const [showSetupConfirmPassword, setShowSetupConfirmPassword] = useState(false);
+  const [restorePreview, setRestorePreview] = useState<ParsedSnapshotPreview | null>(null);
+  const [restorePauseRunning, setRestorePauseRunning] = useState(true);
 
   const [loading, setLoading] = useState(false);
   const [lockUntilMs, setLockUntilMs] = useState<number | null>(() => {
@@ -3031,6 +3209,49 @@ export const AdminLoginView: React.FC<AdminLoginViewProps> = ({
     }
   };
 
+  const handleFirstRestoreFilePick = async (file: File | null) => {
+    setError(null);
+    if (!file) {
+      setRestorePreview(null);
+      return;
+    }
+    try {
+      const text = await file.text();
+      const preview = inspectSnapshotJsonFile(text, file.name, file.size);
+      setRestorePreview(preview);
+    } catch (err) {
+      setRestorePreview(null);
+      setError(err instanceof Error ? err.message : 'Could not parse snapshot file.');
+    }
+  };
+
+  const handleRestoreFirstAdmin = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!restorePreview) {
+      setError('Please select a 234Mail Portable VPS Snapshot (.json) or esp-store.json file first.');
+      return;
+    }
+    setError(null);
+    setLoading(true);
+    try {
+      const res = await apiRequest<{
+        token: string;
+        snapshot: DashboardSnapshot;
+      }>('/api/auth/restore-first-admin', {
+        method: 'POST',
+        body: JSON.stringify({
+          snapshotData: restorePreview.rawObject,
+          pauseRunningCampaigns: restorePauseRunning,
+        }),
+      });
+      onAuthenticatedAdmin(res.token, res.snapshot);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Could not restore VPS snapshot.');
+    } finally {
+      setLoading(false);
+    }
+  };
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (lockUntilMs && lockUntilMs > Date.now()) {
@@ -3118,15 +3339,53 @@ export const AdminLoginView: React.FC<AdminLoginViewProps> = ({
               <span>{needsInitialSetup ? 'FIRST-TIME SERVER SETUP' : 'ADMIN PORTAL'}</span>
             </div>
             <h1 className="text-2xl font-extrabold font-display tracking-tight text-slate-900 dark:text-white">
-              {needsInitialSetup ? 'Create First Admin Account' : 'Admin Sign In'}
+              {needsInitialSetup
+                ? setupMode === 'restore'
+                  ? 'Restore Full VPS Backup'
+                  : 'Create First Admin Account'
+                : 'Admin Sign In'}
             </h1>
             {needsInitialSetup && (
               <p className="text-xs text-slate-500 dark:text-slate-400 mt-1.5 leading-relaxed">
-                Fresh server detected. Set your primary Administrator username, email, and password
-                to initialize this VPS.
+                {setupMode === 'restore'
+                  ? 'Upload your 234Mail Portable VPS Snapshot (.json) or esp-store.json to restore all users, SMTPs, lists, campaigns, and settings onto this new server.'
+                  : 'Fresh server detected. Create your primary Administrator account, or restore a Portable VPS Snapshot from your previous server.'}
               </p>
             )}
           </div>
+
+          {needsInitialSetup && (
+            <div className="grid grid-cols-2 gap-1.5 p-1 rounded-xl border border-slate-200 dark:border-white/10 bg-slate-100 dark:bg-[#101520] text-xs font-mono">
+              <button
+                type="button"
+                onClick={() => {
+                  setSetupMode('create');
+                  setError(null);
+                }}
+                className={`py-2 px-2.5 rounded-lg font-semibold transition-colors cursor-pointer ${
+                  setupMode === 'create'
+                    ? 'bg-cyan-500 text-slate-950'
+                    : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white'
+                }`}
+              >
+                Create New Admin
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setSetupMode('restore');
+                  setError(null);
+                }}
+                className={`py-2 px-2.5 rounded-lg font-semibold transition-colors cursor-pointer ${
+                  setupMode === 'restore'
+                    ? 'bg-cyan-500 text-slate-950'
+                    : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white'
+                }`}
+              >
+                Restore VPS Backup
+              </button>
+            </div>
+          )}
 
           {error && (
             <div className="px-3.5 py-3 rounded-xl border border-rose-500/35 bg-rose-500/10 text-xs font-mono text-rose-700 dark:text-rose-300">
@@ -3139,7 +3398,71 @@ export const AdminLoginView: React.FC<AdminLoginViewProps> = ({
             </div>
           )}
 
-          {needsInitialSetup ? (
+          {needsInitialSetup && setupMode === 'restore' ? (
+            <form onSubmit={handleRestoreFirstAdmin} className="space-y-4">
+              <label className="block rounded-xl border-2 border-dashed border-slate-300 dark:border-white/15 bg-slate-50 dark:bg-[#111621] p-4 text-center hover:border-cyan-500/60 transition-colors cursor-pointer">
+                <input
+                  type="file"
+                  accept=".json,application/json"
+                  onChange={(e) => {
+                    void handleFirstRestoreFilePick(e.target.files?.[0] || null);
+                  }}
+                  className="hidden"
+                />
+                <Upload className="w-6 h-6 mx-auto text-cyan-500 mb-2" />
+                <div className="text-xs font-mono font-bold text-slate-800 dark:text-slate-100">
+                  {restorePreview
+                    ? restorePreview.filename
+                    : 'Select Portable VPS Snapshot (.json)'}
+                </div>
+                <div className="text-[11px] font-mono text-slate-500 mt-1">
+                  Works across any new IP or domain — tracking links rebind automatically.
+                </div>
+              </label>
+
+              {restorePreview && (
+                <div className="rounded-xl border border-emerald-500/35 bg-emerald-500/10 p-3.5 text-xs font-mono space-y-1.5 text-emerald-800 dark:text-emerald-200">
+                  <div className="font-bold flex items-center justify-between gap-2">
+                    <span className="truncate">{restorePreview.formatLabel}</span>
+                    {restorePreview.hasChecksum && (
+                      <span className="text-[10px] px-1.5 py-0.5 rounded bg-emerald-500/20">
+                        SHA-256
+                      </span>
+                    )}
+                  </div>
+                  <div className="grid grid-cols-2 gap-1 text-[11px]">
+                    <span>Users: {restorePreview.usersCount}</span>
+                    <span>Admins: {restorePreview.adminsCount}</span>
+                    <span>SMTPs: {restorePreview.smtpsCount}</span>
+                    <span>Lists: {restorePreview.listsCount}</span>
+                    <span>Campaigns: {restorePreview.campaignsCount}</span>
+                    <span>Drafts: {restorePreview.draftsCount}</span>
+                  </div>
+                  <div className="text-[10px] opacity-80 truncate">
+                    Source: {restorePreview.sourceHost}
+                  </div>
+                </div>
+              )}
+
+              <label className="flex items-center gap-2.5 text-xs font-mono text-slate-600 dark:text-slate-300 cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={restorePauseRunning}
+                  onChange={(e) => setRestorePauseRunning(e.target.checked)}
+                  className="w-4 h-4 accent-cyan-500 shrink-0"
+                />
+                <span>Safely pause running campaigns on restore (recommended)</span>
+              </label>
+
+              <button
+                type="submit"
+                disabled={loading || !restorePreview}
+                className="w-full py-3 px-4 rounded-xl bg-gradient-to-r from-emerald-400 via-cyan-400 to-sky-400 text-slate-950 font-display font-extrabold text-sm hover:opacity-95 disabled:opacity-50 cursor-pointer"
+              >
+                {loading ? 'Restoring Full VPS...' : 'Restore Full VPS & Sign In'}
+              </button>
+            </form>
+          ) : needsInitialSetup ? (
             <form onSubmit={handleSetupFirstAdmin} className="space-y-4">
               <div>
                 <label className="block text-xs font-mono text-slate-500 dark:text-slate-400 mb-1.5">

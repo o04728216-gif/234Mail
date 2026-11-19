@@ -1015,9 +1015,9 @@ export const AccountAndSubscriptionView: React.FC<AccountAndSubscriptionProps> =
             {isPaidActive
               ? 'Send USDT (TRC20) to add access time. Payments automatically stack on your current expiration date.'
               : isTrialLimitReached
-                ? 'Complete your $20 USDT payment below to unlock unlimited email sending for 30 days.'
+                ? `Complete your $${monthlyPrice} USDT payment below to unlock unlimited email sending for ${durationDays} days.`
                 : isFreeTrial
-                  ? 'Send USDT below and verify your transaction ID to activate your 30-day Paid & Active plan.'
+                  ? `Send $${monthlyPrice} USDT below and verify your transaction ID to activate your ${durationDays}-day Paid & Active plan.`
                   : 'Your account is not currently active. Send USDT below and verify your transaction ID to unlock bulk email sending, SMTP Inbox, and tracking right away.'}
           </p>
         </div>

@@ -67,6 +67,75 @@ export interface PlatformSettings {
   paymentNetwork: string;
   newUserDefaultStatus: 'pending' | 'active';
   newUserTrialDays: number;
+  allowNewSignups?: boolean;
+  announcementBanner?: string;
+  maintenanceMode?: boolean;
+  maintenanceMessage?: string;
+}
+
+export interface AdminCheckpointItem {
+  filename: string;
+  createdAt: string;
+  sizeBytes: number;
+  label?: string;
+  usersCount?: number;
+  smtpsCount?: number;
+  listsCount?: number;
+  campaignsCount?: number;
+}
+
+export interface AdminSessionInfo {
+  tokenPrefix: string;
+  sessionId: string;
+  userId: string;
+  userNumber: number;
+  username: string;
+  email: string;
+  role: UserRole;
+  isCurrentSession: boolean;
+  isImpersonation: boolean;
+}
+
+export interface AdminRateLimitEntry {
+  key: string;
+  ip: string;
+  portal: 'admin' | 'user';
+  attempts: number;
+  locked: boolean;
+  retryAfterSeconds: number;
+  lockedUntil: number | null;
+}
+
+export interface AdminSystemStatus {
+  serverTime: string;
+  uptimeSeconds: number;
+  nodeVersion: string;
+  hostname: string;
+  currentOrigin: string;
+  storage: {
+    dataDir: string;
+    dataFile: string;
+    fileSizeBytes: number;
+    hasPreRestoreBackup: boolean;
+    checkpoints: AdminCheckpointItem[];
+  };
+  counts: {
+    users: number;
+    admins: number;
+    smtps: number;
+    lists: number;
+    campaigns: number;
+    runningCampaigns: number;
+    pausedCampaigns: number;
+    drafts: number;
+    tracking: number;
+    errors: number;
+    alerts: number;
+    apiKeys: number;
+    activeSessions: number;
+  };
+  sessions: AdminSessionInfo[];
+  rateLimits: AdminRateLimitEntry[];
 }
 
 export interface InboxSyncInfo {
