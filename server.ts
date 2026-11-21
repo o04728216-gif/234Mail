@@ -2797,6 +2797,15 @@ async function bootstrap() {
   // ============================================================================
   app.post('/api/jobs', requireAuth, (req: AuthenticatedRequest, res: Response) => {
     const sender = req.user!;
+    if (sender.role !== 'admin' && store.state.platformSettings.maintenanceMode) {
+      res.status(503).json({
+        error:
+          store.state.platformSettings.maintenanceMessage?.trim() ||
+          '234Mail is currently in maintenance mode. Sending is temporarily paused.',
+      });
+      return;
+    }
+
     if (!canUserCreateCampaign(sender)) {
       const currentPrice = store.state.platformSettings?.monthlyPriceUsd || 15;
       res.status(402).json({
@@ -2920,6 +2929,11 @@ async function bootstrap() {
       );
     }
 
+    const enforcedFromEmail =
+      sender.role !== 'admin' && !userOpts.allowCustomFrom
+        ? senderWs.smtp.fromDefaultEmail || senderWs.smtp.username || body.fromEmail.trim()
+        : body.fromEmail.trim();
+
     const newJob: StoredJob = {
       id: `job_${crypto.randomBytes(5).toString('hex')}`,
       ownerId: sender.id,
@@ -2927,9 +2941,9 @@ async function bootstrap() {
       campaignName: body.campaignName?.trim() || body.subject.trim().slice(0, 48),
       subject: body.subject.trim(),
       fromName: body.fromName?.trim() || senderWs.smtp.fromDefaultName,
-      fromEmail: body.fromEmail.trim(),
+      fromEmail: enforcedFromEmail,
       replyToName: body.replyToName?.trim() || '',
-      replyToEmail: body.replyToEmail?.trim() || body.fromEmail.trim(),
+      replyToEmail: body.replyToEmail?.trim() || enforcedFromEmail,
       mode: requestedMode,
       body: body.messageBody,
       dispatchMode,
@@ -3035,6 +3049,7 @@ async function bootstrap() {
       }
       job.status = 'running';
       job.pauseReason = null;
+      job.lastSmtpError = null;
       job.limitType = null;
       job.autoResumeAt = null;
       job.startedAt = job.startedAt || new Date().toISOString().slice(0, 19).replace('T', ' ');

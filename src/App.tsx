@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import {
   AlertTriangle,
   ArrowLeft,
@@ -186,6 +186,22 @@ export default function App() {
   const [activeTab, setActiveTab] = useState<WorkspaceTab>('compose');
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const [draftToEdit, setDraftToEdit] = useState<DraftItem | null>(null);
+  const mainScrollRef = useRef<HTMLElement | null>(null);
+
+  const scrollWorkspaceToTop = useCallback(() => {
+    const reset = () => {
+      if (mainScrollRef.current) {
+        mainScrollRef.current.scrollTop = 0;
+      }
+      window.scrollTo({ top: 0, left: 0, behavior: 'auto' });
+    };
+    reset();
+    window.requestAnimationFrame(reset);
+  }, []);
+
+  useEffect(() => {
+    scrollWorkspaceToTop();
+  }, [activeTab, scrollWorkspaceToTop]);
 
   useEffect(() => {
     if (resetTokenParam) {
@@ -821,6 +837,7 @@ export default function App() {
   const selectTab = (tab: WorkspaceTab) => {
     setActiveTab(tab);
     setMobileMenuOpen(false);
+    scrollWorkspaceToTop();
   };
 
   const renderSidebarContent = () => (
@@ -1052,7 +1069,10 @@ export default function App() {
           </div>
         )}
 
-        <main className="flex-1 min-w-0 h-full esp-grid-bg p-3.5 sm:p-6 lg:p-8 xl:p-10 overflow-y-auto">
+        <main
+          ref={mainScrollRef}
+          className="flex-1 min-w-0 h-full esp-grid-bg p-3.5 sm:p-6 lg:p-8 xl:p-10 overflow-y-auto"
+        >
           <div className="max-w-[1440px] w-full mx-auto">
             {/* Touch-Scrollable Quick Navigation Strip on Mobile & Tablet (< lg) — Zero Extra Sticky Height */}
             <div className="lg:hidden mb-4 -mx-1 px-1 flex items-center gap-1.5 overflow-x-auto no-scrollbar pb-1">

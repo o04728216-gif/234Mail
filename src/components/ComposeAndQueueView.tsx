@@ -1192,7 +1192,7 @@ export const ComposeEmailView: React.FC<ComposeEmailViewProps> = ({
       window.setTimeout(() => {
         setFeedback((prev) => (prev?.type === 'ok' ? null : prev));
         onNavigateQueue();
-      }, 650);
+      }, 450);
     } catch (err) {
       setFeedback({ type: 'err', text: err instanceof Error ? err.message : 'Could not send emails' });
     } finally {
@@ -2395,12 +2395,56 @@ export const QueueMonitorView: React.FC<QueueMonitorViewProps> = ({
   onJobUpdated,
   onJobsDeleted,
 }) => {
+  const queueTopRef = useRef<HTMLDivElement | null>(null);
   const [currentPage, setCurrentPage] = useState(1);
+  const [busyJobId, setBusyJobId] = useState<string | null>(null);
+  const [actionError, setActionError] = useState<string | null>(null);
   const [deleteModal, setDeleteModal] = useState<
     null | { mode: 'single'; job: QueueJob } | { mode: 'all'; count: number }
   >(null);
   const [deletingBusy, setDeletingBusy] = useState(false);
   const [deleteError, setDeleteError] = useState<string | null>(null);
+
+  const scrollQueueToTop = () => {
+    const reset = () => {
+      const mainEl = queueTopRef.current?.closest('main');
+      if (mainEl) {
+        mainEl.scrollTop = 0;
+      }
+      queueTopRef.current?.scrollIntoView({ block: 'start', behavior: 'auto' });
+      window.scrollTo({ top: 0, left: 0, behavior: 'auto' });
+    };
+    reset();
+    window.requestAnimationFrame(reset);
+  };
+
+  // Always start at the top of the Queue page on mount so newly sent active queues are immediately visible
+  useEffect(() => {
+    scrollQueueToTop();
+  }, []);
+
+  // Sort active queues (running -> scheduled -> paused) at the very top, keeping newest-first within each group
+  const sortedJobs = useMemo(() => {
+    const rank = (status: QueueJob['status']): number => {
+      if (status === 'running') return 0;
+      if (status === 'scheduled') return 1;
+      if (status === 'paused') return 2;
+      if (status === 'failed') return 3;
+      return 4;
+    };
+    return [...snapshot.jobs].sort((a, b) => rank(a.status) - rank(b.status));
+  }, [snapshot.jobs]);
+
+  const newestJobId = snapshot.jobs[0]?.id || '';
+  const prevNewestJobIdRef = useRef<string>(newestJobId);
+
+  useEffect(() => {
+    if (newestJobId && newestJobId !== prevNewestJobIdRef.current) {
+      prevNewestJobIdRef.current = newestJobId;
+      setCurrentPage(1);
+      scrollQueueToTop();
+    }
+  }, [newestJobId]);
 
   useEffect(() => {
     if (!deleteModal || deletingBusy) return;
@@ -2413,14 +2457,21 @@ export const QueueMonitorView: React.FC<QueueMonitorViewProps> = ({
     return () => window.removeEventListener('keydown', onKeyDown);
   }, [deleteModal, deletingBusy]);
 
-  const totalJobs = snapshot.jobs.length;
+  const totalJobs = sortedJobs.length;
   const totalPages = Math.max(1, Math.ceil(totalJobs / QUEUE_PAGE_SIZE));
   const safePage = Math.min(currentPage, totalPages);
 
   const paginatedJobs = useMemo(() => {
     const startIdx = (safePage - 1) * QUEUE_PAGE_SIZE;
-    return snapshot.jobs.slice(startIdx, startIdx + QUEUE_PAGE_SIZE);
-  }, [snapshot.jobs, safePage]);
+    return sortedJobs.slice(startIdx, startIdx + QUEUE_PAGE_SIZE);
+  }, [sortedJobs, safePage]);
+
+  const allowedHourlySteps = useMemo(() => {
+    if (snapshot.user.role === 'admin') return HOURLY_STEPS;
+    const maxCap = snapshot.user.options?.maxHourlyRate || 1000;
+    const filtered = HOURLY_STEPS.filter((s) => s <= maxCap);
+    return filtered.length > 0 ? filtered : [HOURLY_STEPS[0]];
+  }, [snapshot.user.role, snapshot.user.options?.maxHourlyRate]);
 
   const startItemNum = totalJobs === 0 ? 0 : (safePage - 1) * QUEUE_PAGE_SIZE + 1;
   const endItemNum = Math.min(safePage * QUEUE_PAGE_SIZE, totalJobs);
@@ -2437,6 +2488,11 @@ export const QueueMonitorView: React.FC<QueueMonitorViewProps> = ({
     return pages;
   }, [safePage, totalPages]);
 
+  const goToPage = (nextPage: number) => {
+    setCurrentPage(Math.max(1, Math.min(totalPages, nextPage)));
+    scrollQueueToTop();
+  };
+
   const controlJob = async (
     jobId: string,
     payload: {
@@ -2444,15 +2500,23 @@ export const QueueMonitorView: React.FC<QueueMonitorViewProps> = ({
       hourlyRateLimit?: HourlyRateStep;
     }
   ) => {
-    const res = await apiRequest<{ job: QueueJob }>(
-      `/api/jobs/${jobId}`,
-      {
-        method: 'PATCH',
-        body: JSON.stringify(payload),
-      },
-      token
-    );
-    onJobUpdated(res.job);
+    setActionError(null);
+    setBusyJobId(jobId);
+    try {
+      const res = await apiRequest<{ job: QueueJob }>(
+        `/api/jobs/${jobId}`,
+        {
+          method: 'PATCH',
+          body: JSON.stringify(payload),
+        },
+        token
+      );
+      onJobUpdated(res.job);
+    } catch (err) {
+      setActionError(err instanceof Error ? err.message : 'Could not update queue job.');
+    } finally {
+      setBusyJobId(null);
+    }
   };
 
   const handleConfirmDelete = async () => {
@@ -2506,7 +2570,7 @@ export const QueueMonitorView: React.FC<QueueMonitorViewProps> = ({
         <button
           type="button"
           disabled={safePage <= 1}
-          onClick={() => setCurrentPage((p) => Math.max(1, Math.min(p, totalPages) - 1))}
+          onClick={() => goToPage(safePage - 1)}
           className="min-h-[38px] px-2.5 py-1.5 rounded-lg border border-slate-200 dark:border-white/10 bg-slate-50 dark:bg-[#121722] text-slate-700 dark:text-slate-300 hover:border-cyan-500/40 disabled:opacity-40 inline-flex items-center gap-1 cursor-pointer disabled:cursor-not-allowed"
         >
           <ChevronLeft className="w-3.5 h-3.5" />
@@ -2517,7 +2581,7 @@ export const QueueMonitorView: React.FC<QueueMonitorViewProps> = ({
           <button
             key={pageNum}
             type="button"
-            onClick={() => setCurrentPage(pageNum)}
+            onClick={() => goToPage(pageNum)}
             className={`min-h-[38px] min-w-[36px] px-2.5 py-1.5 rounded-lg border text-center tabular-nums transition-colors cursor-pointer ${
               pageNum === safePage
                 ? 'border-cyan-500 bg-cyan-500 text-slate-950 font-bold'
@@ -2531,7 +2595,7 @@ export const QueueMonitorView: React.FC<QueueMonitorViewProps> = ({
         <button
           type="button"
           disabled={safePage >= totalPages}
-          onClick={() => setCurrentPage((p) => Math.min(totalPages, Math.min(p, totalPages) + 1))}
+          onClick={() => goToPage(safePage + 1)}
           className="min-h-[38px] px-2.5 py-1.5 rounded-lg border border-slate-200 dark:border-white/10 bg-slate-50 dark:bg-[#121722] text-slate-700 dark:text-slate-300 hover:border-cyan-500/40 disabled:opacity-40 inline-flex items-center gap-1 cursor-pointer disabled:cursor-not-allowed"
         >
           <span>Next</span>
@@ -2542,7 +2606,7 @@ export const QueueMonitorView: React.FC<QueueMonitorViewProps> = ({
   );
 
   return (
-    <div className="space-y-6">
+    <div ref={queueTopRef} className="space-y-6">
       <div className="flex flex-col sm:flex-row sm:items-end justify-between gap-4">
         <div>
           <h1 className="text-2xl sm:text-3xl font-extrabold font-display tracking-tight text-slate-900 dark:text-white">
@@ -2569,9 +2633,20 @@ export const QueueMonitorView: React.FC<QueueMonitorViewProps> = ({
         )}
       </div>
 
-      {deleteError && !deleteModal && (
-        <div className="px-4 py-3 rounded-xl border border-rose-500/30 bg-rose-500/10 text-xs font-mono text-rose-700 dark:text-rose-300">
-          {deleteError}
+      {(deleteError || actionError) && !deleteModal && (
+        <div className="px-4 py-3 rounded-xl border border-rose-500/30 bg-rose-500/10 text-xs font-mono text-rose-700 dark:text-rose-300 flex items-center justify-between gap-3">
+          <span>{actionError || deleteError}</span>
+          <button
+            type="button"
+            onClick={() => {
+              setActionError(null);
+              setDeleteError(null);
+            }}
+            aria-label="Dismiss error"
+            className="p-1 opacity-75 hover:opacity-100 cursor-pointer shrink-0"
+          >
+            <X className="w-3.5 h-3.5" />
+          </button>
         </div>
       )}
 
@@ -2670,15 +2745,16 @@ export const QueueMonitorView: React.FC<QueueMonitorViewProps> = ({
                     (job.status === 'running' || job.status === 'paused' || job.status === 'scheduled') && (
                       <select
                         aria-label="Emails per hour"
+                        disabled={busyJobId === job.id}
                         value={job.hourlyRateLimit}
                         onChange={(e) =>
                           controlJob(job.id, {
                             hourlyRateLimit: Number(e.target.value) as HourlyRateStep,
                           })
                         }
-                        className="min-h-[38px] px-2.5 py-1.5 rounded-lg border border-slate-200 dark:border-white/10 bg-slate-50 dark:bg-[#141a26] text-xs font-mono text-slate-800 dark:text-slate-200"
+                        className="min-h-[38px] px-2.5 py-1.5 rounded-lg border border-slate-200 dark:border-white/10 bg-slate-50 dark:bg-[#141a26] text-xs font-mono text-slate-800 dark:text-slate-200 disabled:opacity-50"
                       >
-                        {HOURLY_STEPS.map((s) => (
+                        {allowedHourlySteps.map((s) => (
                           <option key={s} value={s}>
                             {s} / hour
                           </option>
@@ -2689,8 +2765,9 @@ export const QueueMonitorView: React.FC<QueueMonitorViewProps> = ({
                   {job.status === 'scheduled' && (
                     <button
                       type="button"
+                      disabled={busyJobId === job.id}
                       onClick={() => controlJob(job.id, { action: 'start_now' })}
-                      className="min-h-[38px] px-3.5 py-1.5 rounded-lg bg-cyan-500 text-slate-950 text-xs font-semibold inline-flex items-center gap-1 cursor-pointer"
+                      className="min-h-[38px] px-3.5 py-1.5 rounded-lg bg-cyan-500 text-slate-950 text-xs font-semibold inline-flex items-center gap-1 disabled:opacity-50 cursor-pointer"
                     >
                       <Zap className="w-3.5 h-3.5" />
                       <span>Send Now</span>
@@ -2700,8 +2777,9 @@ export const QueueMonitorView: React.FC<QueueMonitorViewProps> = ({
                   {job.status === 'running' && (
                     <button
                       type="button"
+                      disabled={busyJobId === job.id}
                       onClick={() => controlJob(job.id, { action: 'pause' })}
-                      className="min-h-[38px] px-3.5 py-1.5 rounded-lg border border-amber-500/40 text-amber-600 dark:text-amber-400 text-xs font-medium inline-flex items-center gap-1 cursor-pointer"
+                      className="min-h-[38px] px-3.5 py-1.5 rounded-lg border border-amber-500/40 text-amber-600 dark:text-amber-400 text-xs font-medium inline-flex items-center gap-1 disabled:opacity-50 cursor-pointer"
                     >
                       <Pause className="w-3.5 h-3.5" />
                       <span>Pause</span>
@@ -2711,8 +2789,9 @@ export const QueueMonitorView: React.FC<QueueMonitorViewProps> = ({
                   {job.status === 'paused' && (
                     <button
                       type="button"
+                      disabled={busyJobId === job.id}
                       onClick={() => controlJob(job.id, { action: 'resume' })}
-                      className="min-h-[38px] px-3.5 py-1.5 rounded-lg border border-emerald-500/40 text-emerald-600 dark:text-emerald-400 text-xs font-medium inline-flex items-center gap-1 cursor-pointer"
+                      className="min-h-[38px] px-3.5 py-1.5 rounded-lg border border-emerald-500/40 text-emerald-600 dark:text-emerald-400 text-xs font-medium inline-flex items-center gap-1 disabled:opacity-50 cursor-pointer"
                     >
                       <Play className="w-3.5 h-3.5" />
                       <span>Resume</span>
@@ -2722,8 +2801,9 @@ export const QueueMonitorView: React.FC<QueueMonitorViewProps> = ({
                   {job.status === 'failed' && (
                     <button
                       type="button"
+                      disabled={busyJobId === job.id}
                       onClick={() => controlJob(job.id, { action: 'resume' })}
-                      className="min-h-[38px] px-3.5 py-1.5 rounded-lg border border-cyan-500/40 text-cyan-600 dark:text-cyan-400 text-xs font-medium inline-flex items-center gap-1 cursor-pointer"
+                      className="min-h-[38px] px-3.5 py-1.5 rounded-lg border border-cyan-500/40 text-cyan-600 dark:text-cyan-400 text-xs font-medium inline-flex items-center gap-1 disabled:opacity-50 cursor-pointer"
                     >
                       <RotateCcw className="w-3.5 h-3.5" />
                       <span>Retry All</span>
@@ -2733,8 +2813,9 @@ export const QueueMonitorView: React.FC<QueueMonitorViewProps> = ({
                   {(job.status === 'running' || job.status === 'paused' || job.status === 'scheduled') && (
                     <button
                       type="button"
+                      disabled={busyJobId === job.id}
                       onClick={() => controlJob(job.id, { action: 'stop' })}
-                      className="min-h-[38px] px-3.5 py-1.5 rounded-lg border border-rose-500/40 text-rose-600 dark:text-rose-400 text-xs font-medium inline-flex items-center gap-1 cursor-pointer"
+                      className="min-h-[38px] px-3.5 py-1.5 rounded-lg border border-rose-500/40 text-rose-600 dark:text-rose-400 text-xs font-medium inline-flex items-center gap-1 disabled:opacity-50 cursor-pointer"
                     >
                       <Square className="w-3.5 h-3.5" />
                       <span>Stop</span>

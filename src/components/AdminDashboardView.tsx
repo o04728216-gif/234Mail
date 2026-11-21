@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   Activity,
   ArrowLeft,
@@ -132,6 +132,14 @@ export const AdminDashboardView: React.FC<AdminDashboardViewProps> = ({
 }) => {
   const [activeSection, setActiveSection] = useState<AdminSectionTab>('overview');
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
+  const adminMainScrollRef = useRef<HTMLElement | null>(null);
+
+  useEffect(() => {
+    if (adminMainScrollRef.current) {
+      adminMainScrollRef.current.scrollTop = 0;
+    }
+    window.scrollTo({ top: 0, left: 0, behavior: 'auto' });
+  }, [activeSection]);
 
   // Cross-section user filter (when clicking a user's SMTPs or Lists badge)
   const [vaultOwnerFilterId, setVaultOwnerFilterId] = useState<string | null>(null);
@@ -1285,7 +1293,10 @@ export const AdminDashboardView: React.FC<AdminDashboardViewProps> = ({
         )}
 
         {/* Scrollable Content Canvas */}
-        <main className="flex-1 min-w-0 h-full overflow-y-auto esp-grid-bg p-3.5 sm:p-6 lg:p-8">
+        <main
+          ref={adminMainScrollRef}
+          className="flex-1 min-w-0 h-full overflow-y-auto esp-grid-bg p-3.5 sm:p-6 lg:p-8"
+        >
           <div className="max-w-[1440px] w-full mx-auto space-y-6 pb-10">
             {banner && (
               <div
