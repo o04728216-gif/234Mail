@@ -324,7 +324,7 @@ async function bootstrap() {
   app.get('/api/public/pricing', (_req: Request, res: Response) => {
     const ps = store.state.platformSettings;
     res.json({
-      monthlyPriceUsd: Math.max(1, ps.monthlyPriceUsd || 20),
+      monthlyPriceUsd: Math.max(1, ps.monthlyPriceUsd || 15),
       planDurationDays: Math.max(1, ps.planDurationDays || 30),
       paymentNetwork: ps.paymentNetwork || 'TRC20 Network Only',
       allowNewSignups: ps.allowNewSignups !== false,
@@ -349,7 +349,7 @@ async function bootstrap() {
       retryAfterSeconds,
       remainingAttempts: rateLimited ? 0 : Math.max(0, MAX_LOGIN_ATTEMPTS - bucket.attempts),
       needsInitialAdminSetup: !hasAnyAdmin,
-      monthlyPriceUsd: Math.max(1, ps.monthlyPriceUsd || 20),
+      monthlyPriceUsd: Math.max(1, ps.monthlyPriceUsd || 15),
       planDurationDays: Math.max(1, ps.planDurationDays || 30),
     });
   });
@@ -911,7 +911,7 @@ async function bootstrap() {
 
       const ps = store.state.platformSettings;
       const planDays = Math.max(1, ps.planDurationDays || 30);
-      const price = Math.max(1, ps.monthlyPriceUsd || 20);
+      const price = Math.max(1, ps.monthlyPriceUsd || 15);
 
       if (body.action === 'activate') {
         const addDays =
@@ -2798,7 +2798,7 @@ async function bootstrap() {
   app.post('/api/jobs', requireAuth, (req: AuthenticatedRequest, res: Response) => {
     const sender = req.user!;
     if (!canUserCreateCampaign(sender)) {
-      const currentPrice = store.state.platformSettings?.monthlyPriceUsd || 20;
+      const currentPrice = store.state.platformSettings?.monthlyPriceUsd || 15;
       res.status(402).json({
         error: isUserFreeTrial(sender)
           ? `Please complete your $${currentPrice}/month payment on the Subscription page to continue sending campaigns.`
@@ -2999,7 +2999,7 @@ async function bootstrap() {
     ) {
       const jobOwner = store.state.users.find((u) => u.id === jobOwnerId);
       if (req.user!.role !== 'admin' && !canUserDispatchQueuedJobs(jobOwner || req.user)) {
-        const currentPrice = store.state.platformSettings?.monthlyPriceUsd || 20;
+        const currentPrice = store.state.platformSettings?.monthlyPriceUsd || 15;
         res.status(402).json({
           error:
             `Please complete your $${currentPrice}/month payment on the Subscription page to resume or send emails.`,
@@ -3298,7 +3298,7 @@ async function bootstrap() {
     const ownerId = keyRecord.ownerId || 'usr_geekytycoon';
     const ownerUser = store.state.users.find((u) => u.id === ownerId);
     if (!canUserCreateCampaign(ownerUser)) {
-      const currentPrice = store.state.platformSettings?.monthlyPriceUsd || 20;
+      const currentPrice = store.state.platformSettings?.monthlyPriceUsd || 15;
       res.status(402).json({
         error:
           `Please complete your $${currentPrice}/month payment on the Subscription page to continue sending emails.`,

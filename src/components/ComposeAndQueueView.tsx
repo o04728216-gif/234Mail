@@ -1103,7 +1103,7 @@ export const ComposeEmailView: React.FC<ComposeEmailViewProps> = ({
     setFeedback(null);
 
     if (!canCreateCampaign) {
-      const currentPrice = snapshot.platformSettings?.monthlyPriceUsd || 20;
+      const currentPrice = snapshot.platformSettings?.monthlyPriceUsd || 15;
       setShowPaymentPrompt(true);
       setFeedback({
         type: 'err',
@@ -2329,7 +2329,7 @@ export const ComposeEmailView: React.FC<ComposeEmailViewProps> = ({
                   Complete Payment to Continue Sending
                 </h2>
                 <p className="text-xs font-mono text-slate-600 dark:text-slate-400 mt-1.5 leading-relaxed">
-                  Please activate your ${snapshot.platformSettings?.monthlyPriceUsd || 20}/month
+                  Please activate your ${snapshot.platformSettings?.monthlyPriceUsd || 15}/month
                   subscription plan to continue sending email campaigns.
                 </p>
               </div>
@@ -2362,7 +2362,7 @@ export const ComposeEmailView: React.FC<ComposeEmailViewProps> = ({
                 >
                   <Zap className="w-3.5 h-3.5" />
                   <span>
-                    Pay ${snapshot.platformSettings?.monthlyPriceUsd || 20} Now →
+                    Pay ${snapshot.platformSettings?.monthlyPriceUsd || 15} Now →
                   </span>
                 </button>
               )}

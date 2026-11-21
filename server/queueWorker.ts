@@ -143,7 +143,7 @@ class QueueWorkerEngine {
         job.currentThroughputPerSec = 0;
         job.limitType = 'manual';
         job.autoResumeAt = null;
-        const currentPrice = store.state.platformSettings?.monthlyPriceUsd || 20;
+        const currentPrice = store.state.platformSettings?.monthlyPriceUsd || 15;
         job.pauseReason =
           `Reason: Please complete your $${currentPrice}/month payment on the Subscription page, then click Resume.`;
         stateMutated = true;

@@ -302,7 +302,7 @@ export const AdminDashboardView: React.FC<AdminDashboardViewProps> = ({
     allCampaigns: [],
   };
 
-  const planPrice = Math.max(1, snapshot.platformSettings.monthlyPriceUsd || 20);
+  const planPrice = Math.max(1, snapshot.platformSettings.monthlyPriceUsd || 15);
   const planDays = Math.max(1, snapshot.platformSettings.planDurationDays || 30);
 
   const getEffectiveActiveTimes = useCallback(
@@ -813,7 +813,7 @@ export const AdminDashboardView: React.FC<AdminDashboardViewProps> = ({
         {
           method: 'PUT',
           body: JSON.stringify({
-            monthlyPriceUsd: Number(priceUsd) || 20,
+            monthlyPriceUsd: Number(priceUsd) || 15,
             planDurationDays: Number(durationDays) || 30,
             usdtWalletAddress: walletAddr.trim(),
             paymentNetwork: networkNote.trim(),

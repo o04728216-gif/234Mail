@@ -88,7 +88,7 @@ export const LandingAuthView: React.FC<LandingAuthViewProps> = ({
     magicLink?: string;
   } | null>(null);
 
-  const [publicPriceUsd, setPublicPriceUsd] = useState<number>(20);
+  const [publicPriceUsd, setPublicPriceUsd] = useState<number>(15);
   const [publicDurationDays, setPublicDurationDays] = useState<number>(30);
 
   const remainingLockSeconds =

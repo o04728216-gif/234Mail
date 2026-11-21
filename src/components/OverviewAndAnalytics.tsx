@@ -255,7 +255,7 @@ export const OverviewView: React.FC<OverviewViewProps> = ({ snapshot, lang, onNa
               <dt className="text-slate-500 dark:text-slate-400 shrink-0">Plan</dt>
               <dd className="text-slate-900 dark:text-white font-semibold text-right">
                 {isPaidActive
-                  ? `${planDays} Days — $${platformSettings?.monthlyPriceUsd || 20} USDT`
+                  ? `${planDays} Days — $${platformSettings?.monthlyPriceUsd || 15} USDT`
                   : 'Free Trial'}
               </dd>
             </div>
